@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "peter.bible",
+  "name": "Bible",
+  "version": "1.0.0",
+  "author": "peter",
+  "description": "Verse of the day, daily Catholic readings with podcast playback, and a reading streak tracker",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Bible",
+    "description": "Verse of the day, daily readings, podcast player, streak",
+    "category": "Info",
+    "defaultSection": "center",
+    "allowMultiple": false
+  }
+}
