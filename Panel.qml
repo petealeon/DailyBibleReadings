@@ -85,7 +85,10 @@ Panel {
   readonly property var readingTabs: currentReadings ? Model.buildReadingTabs(currentReadings.sections) : []
   readonly property int activeTab: Math.max(0, Math.min(selectedSection, readingTabs.length - 1))
 
-  onViewingKeyChanged: selectedSection = 0
+  onViewingKeyChanged: {
+    selectedSection = 0
+    bibleScroll.contentY = 0
+  }
   readonly property var currentReadings: {
     void root.dataRevision
     return root.readingsByDate[root.viewingKey] || null
@@ -891,7 +894,7 @@ Panel {
               x: Style.space(16)
               width: parent.width - Style.space(32)
               columns: 7
-              spacing: Style.space(2)
+              spacing: 0
 
               Repeater {
                 model: ["S", "M", "T", "W", "T", "F", "S"]
