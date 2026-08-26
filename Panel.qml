@@ -1154,11 +1154,11 @@ Panel {
             Column {
               required property var modelData
               width: bibleColumn.width
-              spacing: Style.space(6)
+              spacing: 0
 
               Item {
                 width: parent.width
-                height: Style.space(16)
+                height: Style.space(22)
 
                 Text {
                   anchors.left: parent.left
@@ -1183,6 +1183,8 @@ Panel {
                   font.italic: true
                 }
               }
+
+              Item { width: parent.width; height: Style.space(4) }
 
               Repeater {
                 model: modelData.lines
