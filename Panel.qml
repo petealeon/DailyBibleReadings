@@ -843,21 +843,21 @@ Panel {
         Column {
           id: bibleColumn
           width: bibleScroll.width
-          spacing: Style.space(14)
+          spacing: Style.space(10)
 
           // ---- Month calendar: liturgical colours, done rings, day picker.
           Column {
             id: calBlock
             width: parent.width
-            spacing: Style.space(6)
+            spacing: Style.space(2)
 
             readonly property int firstWeekday: new Date(calYear, calMonth, 1).getDay()
             readonly property int daysInMonth: new Date(calYear, calMonth + 1, 0).getDate()
-            readonly property real cellWidth: (width - Style.space(32)) / 7
+            readonly property real cellWidth: (width - Style.space(24)) / 7
 
             Item {
               width: parent.width
-              height: Style.space(22)
+              height: Style.space(18)
 
               NavButton {
                 glyph: "<"
@@ -865,7 +865,7 @@ Panel {
                 tooltipText: "Previous month"
                 onActivated: root.setCalMonthIndex(root.calMonthIndex - 1)
                 anchors.left: parent.left
-                anchors.leftMargin: Style.space(16)
+                anchors.leftMargin: Style.space(12)
                 anchors.verticalCenter: parent.verticalCenter
               }
 
@@ -884,15 +884,15 @@ Panel {
                 tooltipText: "Next month"
                 onActivated: root.setCalMonthIndex(root.calMonthIndex + 1)
                 anchors.right: parent.right
-                anchors.rightMargin: Style.space(16)
+                anchors.rightMargin: Style.space(12)
                 anchors.verticalCenter: parent.verticalCenter
               }
             }
 
             Item {
-              x: Style.space(16)
-              width: parent.width - Style.space(32)
-              height: (numRows + 1) * Style.space(28)
+              x: Style.space(12)
+              width: parent.width - Style.space(24)
+              height: (numRows + 1) * Style.space(24)
 
               readonly property int numRows: Math.ceil((calBlock.firstWeekday + calBlock.daysInMonth) / 7)
 
@@ -903,7 +903,7 @@ Panel {
                   x: index * calBlock.cellWidth
                   y: 0
                   width: calBlock.cellWidth
-                  height: Style.space(28)
+                  height: Style.space(24)
                   verticalAlignment: Text.AlignVCenter
                   horizontalAlignment: Text.AlignHCenter
                   text: ["S", "M", "T", "W", "T", "F", "S"][index]
@@ -920,9 +920,9 @@ Panel {
                   id: dayCell
                   required property int index
                   x: (index % 7) * calBlock.cellWidth
-                  y: (Math.floor(index / 7) + 1) * Style.space(28)
+                  y: (Math.floor(index / 7) + 1) * Style.space(24)
                   width: calBlock.cellWidth
-                  height: Style.space(28)
+                  height: Style.space(24)
 
                   readonly property int dayNumber: index + 1 - calBlock.firstWeekday
                   readonly property string dateKey: dayNumber >= 1
@@ -938,7 +938,7 @@ Panel {
 
                   Rectangle {
                     anchors.fill: parent
-                    anchors.margins: Style.space(1)
+                    anchors.margins: 0
                     radius: Style.cornerRadius
                     color: dayCell.isSelected ? Style.selectedFillFor(root.bar.foreground, Color.accent)
                       : (dayCell.available && dayArea.containsMouse ? Style.hoverFillFor(root.bar.foreground, Color.accent) : "transparent")
@@ -948,7 +948,7 @@ Panel {
 
                   Rectangle {
                     anchors.fill: parent
-                    anchors.margins: Style.space(1)
+                    anchors.margins: 0
                     radius: Style.cornerRadius
                     color: "transparent"
                     border.width: dayCell.isToday && !dayCell.isSelected ? 1 : 0
