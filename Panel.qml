@@ -798,6 +798,51 @@ Panel {
     }
   }
 
+  // One credits row: dim prefix, clickable source link, dim suffix.
+  component CreditLine: Row {
+    id: creditLine
+    required property string prefix
+    required property string linkText
+    required property string url
+    required property string suffix
+    spacing: 0
+
+    Text {
+      text: creditLine.prefix
+      color: Qt.darker(root.bar.foreground, 1.5)
+      font.family: root.bar.fontFamily
+      font.pixelSize: Style.font.caption
+    }
+
+    Text {
+      id: creditLink
+      text: creditLine.linkText
+      color: root.bar.foreground
+      font.family: root.bar.fontFamily
+      font.pixelSize: Style.font.caption
+      font.underline: creditLinkArea.containsMouse
+
+      MouseArea {
+        id: creditLinkArea
+        anchors.fill: parent
+        hoverEnabled: true
+        cursorShape: Qt.PointingHandCursor
+        onClicked: {
+          if (!Qt.openUrlExternally(creditLine.url) && root.bar)
+            root.bar.run("xdg-open \"" + creditLine.url + "\"")
+        }
+      }
+    }
+
+    Text {
+      visible: creditLine.suffix !== ""
+      text: creditLine.suffix
+      color: Qt.darker(root.bar.foreground, 1.5)
+      font.family: root.bar.fontFamily
+      font.pixelSize: Style.font.caption
+    }
+  }
+
   KeyboardPanel {
     id: panel
     anchorItem: root.anchorItem
@@ -1503,6 +1548,86 @@ Panel {
               }
             }
           }
+
+          // ---- Credits: data sources, copyright, and links.
+          Column {
+            width: parent.width
+            spacing: Style.space(4)
+
+            Item {
+              width: creditsToggleLabel.implicitWidth
+              height: creditsToggleLabel.implicitHeight
+              x: Style.space(16)
+
+              Text {
+                id: creditsToggleLabel
+                text: "CREDITS"
+                color: Qt.darker(root.bar.foreground, 1.4)
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.caption
+                font.letterSpacing: 1
+              }
+
+              MouseArea {
+                id: creditsToggleArea
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.creditsExpanded = !root.creditsExpanded
+              }
+
+              Rectangle {
+                anchors.fill: parent
+                radius: Style.cornerRadius
+                color: creditsToggleArea.containsMouse ? Style.hoverFillFor(root.bar.foreground, Color.accent) : "transparent"
+                z: -1
+              }
+            }
+
+            Column {
+              visible: root.creditsExpanded
+              x: Style.space(16)
+              width: parent.width - Style.space(16)
+              spacing: Style.space(3)
+
+              CreditLine {
+                prefix: "Readings: "
+                linkText: "universalis.com"
+                url: "https://universalis.com/mass.htm"
+                suffix: " \u2014 Jerusalem Bible \u00A9 Darton, Longman & Todd"
+              }
+
+              CreditLine {
+                prefix: "Verse of the day: "
+                linkText: "OurManna.com"
+                url: "https://www.ourmanna.com"
+                suffix: ""
+              }
+
+              CreditLine {
+                prefix: "Verse fallback: "
+                linkText: "bible-api.com"
+                url: "https://bible-api.com"
+                suffix: " (public domain translations)"
+              }
+
+              CreditLine {
+                prefix: "Podcast: "
+                linkText: "USCCB Daily Mass Reading Podcast"
+                url: "https://bible.usccb.org/podcasts/audio"
+                suffix: " \u2014 \u00A9 USCCB, official feed"
+              }
+
+              Text {
+                width: parent.width
+                text: "For personal devotion. Not affiliated with or endorsed by these organisations; scripture remains \u00A9 its publishers."
+                color: Qt.darker(root.bar.foreground, 1.5)
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.WordWrap
+              }
+            }
+          }
         }
       }
     }
@@ -1511,6 +1636,7 @@ Panel {
   // --------------------------------------------------------- ui helpers
 
   property bool rosaryExpanded: false
+  property bool creditsExpanded: false
 
   readonly property string rosarySummary: {
     var r = Model.rosaryMysteries(viewingKey)

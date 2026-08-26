@@ -96,3 +96,28 @@ Widget settings live in the bar layout entry in `~/.config/omarchy/shell.json`:
   fallback (default `web`).
 
 State (streak, per-day caches) lives under `~/.local/state/omarchy/bible/`.
+
+## Credits & Copyright
+
+- **Daily Mass readings** — [universalis.com](https://universalis.com/mass.htm);
+  readings text from the Jerusalem Bible, © Darton, Longman & Todd (psalms as
+  displayed there). Fetched at runtime from Universalis's free web pages for
+  personal devotion.
+- **Verse of the day** — powered by [OurManna.com](https://www.ourmanna.com);
+  offline fallback via [bible-api.com](https://bible-api.com) (public domain
+  translations).
+- **Podcast** — [USCCB Daily Mass Reading Podcast](https://bible.usccb.org/podcasts/audio),
+  © United States Conference of Catholic Bishops; unaltered audio streamed
+  from the official feed.
+
+This widget is an independent personal project. It is **not affiliated with,
+endorsed by, or sponsored by** the USCCB, Universalis Publishing, or any Bible
+publisher. Scripture readings remain © their respective publishers; the widget
+ships with no text or audio embedded and retrieves everything from the sources
+above for personal, non-commercial use. If you use Universalis daily, consider
+supporting them — their work is how this widget gets its readings.
+
+## License
+
+[MIT](LICENSE) © Peter. The widget's *code* is freely reusable; the scripture
+readings and podcast audio it fetches remain under their publishers' copyright.
