@@ -552,7 +552,6 @@ Panel {
 
   // ------------------------------------------------------- day navigation
 
-  // Calendar-driven selection; only days we can actually serve are clickable.
   function selectDay(key) {
     if (!key || key === viewingKey) return
     if (key < Cal.minDate() || key > Cal.maxDate()) return
@@ -890,20 +889,24 @@ Panel {
               }
             }
 
-            Grid {
+            Item {
               x: Style.space(16)
               width: parent.width - Style.space(32)
-              columns: 7
-              spacing: 0
+              height: (calBlock.numRows + 1) * Style.space(28)
+
+              property int numRows: Math.ceil((calBlock.firstWeekday + calBlock.daysInMonth) / 7)
 
               Repeater {
-                model: ["S", "M", "T", "W", "T", "F", "S"]
-
+                model: 7
                 Text {
-                  required property string modelData
+                  required property int index
+                  x: index * calBlock.cellWidth
+                  y: 0
                   width: calBlock.cellWidth
+                  height: Style.space(28)
+                  verticalAlignment: Text.AlignVCenter
                   horizontalAlignment: Text.AlignHCenter
-                  text: modelData
+                  text: ["S", "M", "T", "W", "T", "F", "S"][index]
                   color: Qt.darker(root.bar.foreground, 1.5)
                   font.family: root.bar.fontFamily
                   font.pixelSize: Style.font.caption
@@ -916,6 +919,8 @@ Panel {
                 Item {
                   id: dayCell
                   required property int index
+                  x: (index % 7) * calBlock.cellWidth
+                  y: (Math.floor(index / 7) + 1) * Style.space(28)
                   width: calBlock.cellWidth
                   height: Style.space(28)
 
@@ -938,7 +943,6 @@ Panel {
                     color: dayCell.isSelected ? Style.selectedFillFor(root.bar.foreground, Color.accent)
                       : (dayCell.available && dayArea.containsMouse ? Style.hoverFillFor(root.bar.foreground, Color.accent) : "transparent")
                     border.width: dayCell.isDone ? 1 : 0
-                    // Faint green ring: this day has been read or listened to.
                     border.color: Qt.alpha("#6f996f", 0.55)
                   }
 
@@ -1198,24 +1202,32 @@ Panel {
             }
           }
 
-          Text {
+          // ---- Loading / unavailable states for readings text.
+          Column {
             x: Style.space(16)
-            visible: !currentReadings && !readingsFeedFetched && readingsProc.running
-            text: "Fetching readings\u2026"
-            color: Qt.darker(root.bar.foreground, 1.5)
-            font.family: root.bar.fontFamily
-            font.pixelSize: Style.font.bodySmall
-            font.italic: true
-          }
+            width: parent.width - Style.space(32)
+            visible: !currentReadings
+            spacing: Style.space(4)
 
-          Text {
-            x: Style.space(16)
-            visible: !currentReadings && readingsFeedFetched && !readingsProc.running
-            text: "Readings text unavailable for this date \u2014 see bible.usccb.org"
-            color: Qt.darker(root.bar.foreground, 1.5)
-            font.family: root.bar.fontFamily
-            font.pixelSize: Style.font.bodySmall
-            font.italic: true
+            Text {
+              visible: readingsProc.running
+              text: "Fetching readings\u2026"
+              color: Qt.darker(root.bar.foreground, 1.5)
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              font.italic: true
+            }
+
+            Text {
+              visible: !readingsProc.running
+              text: "Readings text not available for this date.\nFull readings are available for the most recent days at bible.usccb.org"
+              color: Qt.darker(root.bar.foreground, 1.5)
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              font.italic: true
+              wrapMode: Text.WordWrap
+              width: parent.width
+            }
           }
 
           // ---- Saint / feast of the day (from the bundled calendar).
