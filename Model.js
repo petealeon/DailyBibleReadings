@@ -79,7 +79,7 @@ function trimWords(s, max) {
 // Display of this feed is permitted by the USCCB RSS policy for free,
 // non-gated services; text is fetched per-user at runtime and cached locally.
 function usccbRss() {
-  return "https://bible.usccb.org/bible/readings/rss/index.cfm"
+  return "https://bible.usccb.org/readings.rss"
 }
 
 // Parse the feed into { byDate: {key: parsed}, order: [keys] } where parsed is

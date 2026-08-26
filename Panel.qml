@@ -222,7 +222,7 @@ Panel {
 
   Process {
     id: readingsProc
-    command: ["curl", "-fsS", "--max-time", "12", Model.usccbRss()]
+    command: ["curl", "-fsSL", "--max-time", "12", Model.usccbRss()]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
@@ -892,9 +892,9 @@ Panel {
             Item {
               x: Style.space(16)
               width: parent.width - Style.space(32)
-              height: (calBlock.numRows + 1) * Style.space(28)
+              height: (numRows + 1) * Style.space(28)
 
-              property int numRows: Math.ceil((calBlock.firstWeekday + calBlock.daysInMonth) / 7)
+              readonly property int numRows: Math.ceil((calBlock.firstWeekday + calBlock.daysInMonth) / 7)
 
               Repeater {
                 model: 7
