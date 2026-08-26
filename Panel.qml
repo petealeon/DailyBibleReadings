@@ -4,6 +4,7 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 import "Model.js" as Model
+import "LectionaryCalendar.js" as Cal
 
 Panel {
   id: root
@@ -58,34 +59,25 @@ Panel {
   readonly property int refreshMinutes: Math.max(5, parseInt(setting("refreshMinutes", 30), 10) || 30)
   readonly property bool reminderEnabled: setting("reminderEnabled", true) !== false
   readonly property int reminderHour: Math.min(23, Math.max(0, parseInt(setting("reminderHour", 8), 10)))
-  readonly property string fallbackTranslation: String(setting("fallbackTranslation", "web"))
 
   // --------------------------------------------------------------- state
 
   property string todayK: Model.todayKey() // updated by the rollover timer
 
-  // Pill: simple cross outline, always.
-  readonly property bool markedToday: streakState.lastMarked === root.todayK
+  // Pill: simple cross outline.
   readonly property string label: "\uDB83\uDCF6"
 
-  // An unbroken chain survives until yesterday is missed.
-  readonly property int streakDays: {
-    if (streakState.lastMarked === root.todayK) return streakState.count
-    if (streakState.lastMarked === Model.shiftKey(root.todayK, -1)) return streakState.count
-    return 0
-  }
-  property var streakState: Model.emptyStreak()
-  property bool streakLoaded: false
+  // Per-day interaction state: green rings + the simplified daily reminder.
+  property var activityData: Model.emptyActivity()
+  property bool activityLoaded: false
 
   // Plain JS objects don't emit change notifications, so every mutation
   // bumps dataRevision and downstream bindings reference it explicitly.
   property int dataRevision: 0
 
-  property var votd: null            // {text, reference, version}
-  property bool votdLoading: false
-
-  property var readingsByDate: ({})  // dateKey -> parsed universalis result
-  property var readingsStatus: ({})  // dateKey -> "loading" | "ok" | "error"
+  property var readingsByDate: ({})  // dateKey -> parsed USCCB RSS day
+  property var readingsStatus: ({})  // dateKey -> "ok" | "error" ("" = unknown)
+  property bool readingsFeedFetched: false
   property string viewingKey: Model.todayKey()
   property int selectedSection: 0
 
@@ -103,16 +95,24 @@ Panel {
     return root.readingsStatus[root.viewingKey] || ""
   }
 
-  property var podcastByKey: ({})    // dateKey -> {title,url,durationSeconds}
-  property var podcastStatus: ({})
+  // Whole-feed podcast map: one fetch covers every day the feed reaches.
+  property var podcastByDate: ({})
+  property bool podcastFeedFetched: false
   readonly property var currentPodcast: {
     void root.dataRevision
-    return root.podcastByKey[root.viewingKey] || null
+    return root.podcastByDate[root.viewingKey] || null
   }
   readonly property string podcastPhase: {
     void root.dataRevision
-    return root.podcastStatus[root.viewingKey] || ""
+    if (podcastProc.running && !root.podcastByDate[root.viewingKey]) return "loading"
+    if (root.podcastFeedFetched && !root.podcastByDate[root.viewingKey]) return "error"
+    return ""
   }
+
+  // Bundled liturgical calendar entry for the viewed day.
+  readonly property var dayMeta: Cal.get(viewingKey)
+  readonly property string dayTitle: (currentReadings && currentReadings.title) ||
+    (dayMeta ? dayMeta.title : Model.longDate(viewingKey))
 
   // Playback (mpv driven over its JSON IPC socket via socat).
   property bool playing: false
@@ -127,25 +127,27 @@ Panel {
   // Right-click pill notification (quote-stripped so bar.run quoting holds).
   readonly property string notificationText: {
     var parts = []
-    if (votd) parts.push(votd.reference + " (" + votd.version + ") \u2014 " + Model.trimWords(votd.text, 160))
-    else parts.push("Verse of the day not fetched yet")
-    if (currentReadings && currentReadings.title) parts.push(currentReadings.title)
-    if (streakDays > 0) parts.push("\uD83D\uDD25 " + streakDays + "-day streak")
-    return String(parts.join(" \u2022 ")).replace(/[$`"\\]/g, "'")
+    var meta = Cal.get(root.todayK)
+    parts.push(meta ? meta.title : Model.longDate(root.todayK))
+    if (currentReadings && currentReadings.sections) {
+      var cites = []
+      for (var i = 0; i < currentReadings.sections.length; i++)
+        if (currentReadings.sections[i].citation) cites.push(currentReadings.sections[i].citation)
+      if (cites.length) parts.push(cites.join(" \u00B7 "))
+    }
+    return String(parts.join(" \u2014 ")).replace(/[$`"\\]/g, "'")
   }
 
-  readonly property color liturgicalColor: currentReadings ? Model.seasonColor(currentReadings.colour) : "transparent"
+  readonly property color liturgicalColor: dayMeta ? Model.liturgicalColourHex(dayMeta.colour) : "transparent"
 
   // ---------------------------------------------------------------- utils
 
   function ensureAll() {
-    ensureVotd(false)
     ensureReadings(false)
     ensurePodcast(false)
   }
 
   function refreshAll() {
-    ensureVotd(false) // verse is per-day; refetches only after rollover clears it
     ensureReadings(true)
     ensurePodcast(true)
   }
@@ -191,153 +193,80 @@ Panel {
     if (!data) return
     var kind = purpose.split(":")[0]
     var key = purpose.split(":")[1]
-    if (kind === "votd" && !votd && data.votd) {
-      votd = data.votd
-    } else if (kind === "readings" && key && !readingsByDate[key]) {
+    if (kind === "readings" && key && !readingsByDate[key]) {
       if (data.readings && data.readings.ok) {
         readingsByDate[key] = data.readings
         readingsStatus[key] = "ok"
       }
-    } else if (kind === "podcast" && key && !podcastByKey[key]) {
-      if (data.podcast) {
-        podcastByKey[key] = data.podcast
-        podcastStatus[key] = "ok"
+    } else if (kind === "podcastFeed" && !podcastFeedFetched) {
+      if (data.feed) {
+        podcastByDate = data.feed
+        podcastFeedFetched = true
       }
     }
     dataRevision++
-  }
-
-  // ---------------------------------------------------------- verse of day
-
-  function ensureVotd(force) {
-    if (votdLoading) return
-    if (!force && votd) return
-    votdLoading = true
-    votdProc.running = true
-  }
-
-  Process {
-    id: votdProc
-    command: ["curl", "-fsS", "--max-time", "8", "https://beta.ourmanna.com/api/v1/get/?format=json"]
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        votdLoading = false
-        var parsed = Model.parseManna(String(text || ""))
-        if (parsed) {
-          root.votd = parsed
-          root.cacheWrite("votd-" + root.todayK + ".json", JSON.stringify({ votd: parsed }))
-        } else {
-          votdFallbackProc.restartIfNeeded()
-        }
-      }
-    }
-  }
-
-  // OurManna down/offline → deterministic reference of the day via bible-api.
-  Process {
-    id: votdFallbackProc
-
-    function restartIfNeeded() {
-      command = ["curl", "-fsS", "--max-time", "8",
-        Model.bibleApiUrl(Model.fallbackReference(root.todayK), root.fallbackTranslation)]
-      running = true
-    }
-
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        var parsed = Model.parseBibleApi(String(text || ""), Model.fallbackReference(root.todayK))
-        if (parsed) {
-          root.votd = parsed
-          root.cacheWrite("votd-" + root.todayK + ".json", JSON.stringify({ votd: parsed }))
-        } else {
-          root.cacheRead("votd:" + root.todayK, "votd-" + root.todayK + ".json")
-        }
-      }
-    }
   }
 
   // -------------------------------------------------------------- readings
 
+  // One RSS fetch populates the whole ~10-day window; per-day caches keep it
+  // available offline afterwards.
   function ensureReadings(force) {
-    var key = viewingKey
-    if (!force && (readingsByDate[key] || readingsStatus[key] === "loading")) return
+    if (!force && readingsFeedFetched) return
     if (readingsProc.running) return
-    readingsStatus[key] = "loading"
-    dataRevision++
-    readingsProc.targetKey = key
-    readingsProc.command = ["curl", "-fsSL", "--max-time", "12", "-A", "Mozilla/5.0",
-      Model.universalisUrl(key)]
     readingsProc.running = true
   }
 
   Process {
     id: readingsProc
-    property string targetKey: ""
+    command: ["curl", "-fsS", "--max-time", "12", Model.usccbRss()]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        var key = readingsProc.targetKey
-        var parsed = Model.parseUniversalis(String(text || ""))
-        if (parsed.ok) {
-          root.readingsByDate[key] = parsed
+        var feed = Model.parseUsccbRss(String(text || ""))
+        var count = 0
+        for (var key in feed.byDate) {
+          root.readingsByDate[key] = feed.byDate[key]
           root.readingsStatus[key] = "ok"
-          root.cacheWrite("readings-" + key + ".json", JSON.stringify({ readings: parsed }))
-        } else {
-          root.readingsStatus[key] = "error"
+          root.cacheWrite("readings-" + key + ".json", JSON.stringify({ readings: feed.byDate[key] }))
+          count++
+        }
+        readingsFeedFetched = count > 0
+        if (!readingsFeedFetched) {
+          readingsStatus[root.viewingKey] = "error"
+          root.cacheRead("readings:" + root.viewingKey, "readings-" + root.viewingKey + ".json")
         }
         root.dataRevision++
       }
     }
-    onExited: {
-      if (!root.readingsByDate[targetKey])
-        root.cacheRead("readings:" + targetKey, "readings-" + targetKey + ".json")
-      // A navigate() during this fetch was dropped by the in-flight guard;
-      // pick up whatever day is on screen now (never re-fires for the same
-      // day, so a failing network cannot loop).
-      if (targetKey !== root.viewingKey)
-        Qt.callLater(function() { root.ensureReadings(false) })
-    }
+    onExited: root.dataRevision++
   }
 
   // --------------------------------------------------------------- podcast
 
   function ensurePodcast(force) {
-    var key = viewingKey
-    if (!force && (podcastByKey[key] || podcastStatus[key] === "loading")) return
+    if (!force && podcastFeedFetched) return
     if (podcastProc.running) return
-    podcastStatus[key] = "loading"
-    dataRevision++
-    podcastProc.targetKey = key
     podcastProc.running = true
   }
 
-  // Official USCCB Daily Readings podcast feed (SoundCloud-hosted).
+  // The SoundCloud feed carries every episode; one fetch maps them all by date.
   Process {
     id: podcastProc
-    property string targetKey: ""
     command: ["curl", "-fsS", "--max-time", "12", Model.podcastRss()]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        var key = podcastProc.targetKey
-        var matched = Model.matchPodcast(String(text || ""), key)
-        if (matched) {
-          root.podcastByKey[key] = matched
-          root.podcastStatus[key] = "ok"
-          root.cacheWrite("podcast-" + key + ".json", JSON.stringify({ podcast: matched }))
+        var feed = Model.matchAllPodcasts(String(text || ""))
+        if (feed) {
+          root.podcastByDate = feed
+          root.podcastFeedFetched = true
+          root.cacheWrite("podcast-feed.json", JSON.stringify({ feed: feed }))
         } else {
-          root.podcastStatus[key] = "error"
+          root.cacheRead("podcastFeed", "podcast-feed.json")
         }
         root.dataRevision++
       }
-    }
-    onExited: {
-      if (!root.podcastByKey[targetKey])
-        root.cacheRead("podcast:" + targetKey, "podcast-" + targetKey + ".json")
-      if (targetKey !== root.viewingKey)
-        Qt.callLater(function() { root.ensurePodcast(false) })
     }
   }
 
@@ -428,6 +357,7 @@ Panel {
     progressFailures = 0
     paused = false
     playingKey = viewingKey
+    markDayDone(viewingKey)
     if (playing) {
       // An episode is already rolling: hot-swap the stream in place rather
       // than respawning mpv (the old process would hold the socket and the
@@ -509,46 +439,61 @@ Panel {
     if (pos !== null && pos >= 0) elapsedSeconds = Math.round(pos)
   }
 
-  // ---------------------------------------------------------------- streak
+  // ------------------------------------------------------------ activity
 
-  property FileView streakFile: FileView {
-    path: Quickshell.env("HOME") + "/.local/state/omarchy/bible/streak.json"
+  property FileView activityFile: FileView {
+    path: Quickshell.env("HOME") + "/.local/state/omarchy/bible/activity.json"
     watchChanges: true
     printErrors: false
     onLoaded: {
-      root.applyStreakState(Model.parseStreakFile(text()))
-      root.streakLoaded = true
+      root.activityData = Model.parseActivityFile(text())
+      root.activityLoaded = true
     }
     onFileChanged: reload()
-    onLoadFailed: root.streakLoaded = true
+    onLoadFailed: root.activityLoaded = true
   }
 
-  function applyStreakState(state) {
-    streakState = state
+  function setActivity(mutate) {
+    var next = JSON.parse(JSON.stringify(activityData))
+    mutate(next)
+    activityData = next
+    persistActivity(next)
   }
 
-  function markRead() {
-    if (markedToday) return
-    var next = Model.markRead(streakState, todayK)
-    streakState = next
-    persistStreak(next)
+  function isDone(key) {
+    return activityData.done[key] === true
   }
 
-  function persistStreak(state) {
-    var target = Quickshell.env("HOME") + "/.local/state/omarchy/bible/streak.json"
-    streakSaveProc.command = ["bash", "-c",
-      "mkdir -p \"$(dirname \"$2\")\" && printf %s \"$1\" > \"$2\"", "bible-streak", JSON.stringify(state), target]
-    streakSaveProc.running = true
+  function markDayDone(key) {
+    if (isDone(key)) return
+    setActivity(function(a) { a.done[key] = true })
+  }
+
+  // A day counts as engaged once its podcast has been played or every one of
+  // its reading tabs has been opened.
+  function noteTabViewed(label) {
+    var key = viewingKey
+    var seen = activityData.viewedTabs[key] || []
+    if (seen.indexOf(label) >= 0) return
+    var next = seen.concat([label])
+    var allSeen = readingTabs.length > 0
+    for (var i = 0; i < readingTabs.length; i++)
+      if (next.indexOf(readingTabs[i].label) < 0) allSeen = false
+    setActivity(function(a) {
+      a.viewedTabs[key] = next
+      if (allSeen) a.done[key] = true
+    })
+  }
+
+  function persistActivity(state) {
+    var target = Quickshell.env("HOME") + "/.local/state/omarchy/bible/activity.json"
+    activitySaveProc.command = ["bash", "-c",
+      "mkdir -p \"$(dirname \"$2\")\" && printf %s \"$1\" > \"$2\"", "bible-activity", JSON.stringify(state), target]
+    activitySaveProc.running = true
   }
 
   Process {
-    id: streakSaveProc
-  }
-
-  function recordReminderSent() {
-    var next = Object.assign({}, streakState, { lastReminder: todayK })
-    streakState = next
-    persistStreak(next)
+    id: activitySaveProc
   }
 
   // ------------------------------------------------------------- reminders
@@ -562,16 +507,16 @@ Panel {
   }
 
   function checkReminder() {
-    if (!reminderEnabled || !streakLoaded) return
+    if (!reminderEnabled || !activityLoaded) return
     var now = new Date()
     if (now.getHours() < reminderHour) return
-    if (markedToday) return
-    if (streakState.lastReminder === todayK) return
+    if (isDone(todayK)) return
+    if (activityData.lastNotified === todayK) return
+    var meta = Cal.get(todayK)
     var msg = "Today's readings are waiting"
-    if (currentReadings && currentReadings.title) msg += " \u2014 " + currentReadings.title
-    if (streakDays > 0) msg += " (\uD83D\uDD25 " + streakDays + "-day streak)"
+    if (meta && meta.title) msg += " \u2014 " + meta.title
     sendNotification(msg)
-    recordReminderSent()
+    setActivity(function(a) { a.lastNotified = todayK })
   }
 
   function sendNotification(message) {
@@ -580,30 +525,17 @@ Panel {
     bar.run("omarchy-notification-send \"" + safe + "\"")
   }
 
-  // Copy verse of the day / readings to the clipboard, with brief feedback.
+  // Copy readings to the clipboard, with brief feedback.
   Process {
     id: copyProc
   }
 
-  property bool votdCopied: false
   property bool readingsCopied: false
 
   Timer {
     id: copyFeedbackTimer
     interval: 1500
-    onTriggered: {
-      root.votdCopied = false
-      root.readingsCopied = false
-    }
-  }
-
-  function copyVotd() {
-    if (!votd) return
-    var text = "\u201C" + votd.text + "\u201D \u2014 " + votd.reference + " (" + votd.version + ")"
-    copyProc.command = ["wl-copy", text]
-    copyProc.running = true
-    votdCopied = true
-    copyFeedbackTimer.restart()
+    onTriggered: root.readingsCopied = false
   }
 
   function copyReadings() {
@@ -615,15 +547,14 @@ Panel {
     copyFeedbackTimer.restart()
   }
 
-  // -------------------------------------------------------- day navigation
+  // ------------------------------------------------------- day navigation
 
-  function navigate(delta) {
-    var next = Model.shiftKey(viewingKey, delta)
-    var earliest = Model.shiftKey(todayK, -7)
-    var latest = Model.shiftKey(todayK, 7) // read/listen ahead (e.g. Sunday vigil)
-    if (next < earliest || next > latest) return
-    viewingKey = next
-    ensureReadings(false)
+  // Calendar-driven selection; only days we can actually serve are clickable.
+  function selectDay(key) {
+    if (!key || key === viewingKey) return
+    if (key < Cal.minDate() || key > Cal.maxDate()) return
+    if (!contentAvailable(key)) return
+    viewingKey = key
     ensurePodcast(false)
     followPlayback()
   }
@@ -638,8 +569,34 @@ Panel {
     else stopPlayback()
   }
 
-  readonly property bool canGoBack: Model.shiftKey(viewingKey, -1) >= Model.shiftKey(todayK, -7)
-  readonly property bool canGoForward: viewingKey < Model.shiftKey(todayK, 7)
+  // A day is clickable when its readings text or its podcast is in hand.
+  function contentAvailable(key) {
+    return !!readingsByDate[key] || !!podcastByDate[key]
+  }
+
+  // Calendar month being viewed.
+  property int calMonth: new Date().getMonth()
+  property int calYear: new Date().getFullYear()
+  readonly property int calMonthIndex: calYear * 12 + calMonth
+  readonly property int calMinIndex: {
+    var p = Cal.minDate().split("-")
+    return (parseInt(p[0], 10)) * 12 + (parseInt(p[1], 10) - 1)
+  }
+  readonly property int calMaxIndex: {
+    var p = Cal.maxDate().split("-")
+    return (parseInt(p[0], 10)) * 12 + (parseInt(p[1], 10) - 1)
+  }
+
+  function setCalMonthIndex(idx) {
+    idx = Math.max(calMinIndex, Math.min(calMaxIndex, idx))
+    calYear = Math.floor(idx / 12)
+    calMonth = idx % 12
+  }
+
+  function setCalMonthFromKey(key) {
+    var p = String(key).split("-")
+    setCalMonthIndex((parseInt(p[0], 10)) * 12 + (parseInt(p[1], 10) - 1))
+  }
 
   // ------------------------------------------------------- refresh cycles
 
@@ -668,7 +625,7 @@ Panel {
         root.sessionDay = now
         root.viewingKey = now
         root.selectedSection = 0
-        root.votd = null // fresh verse for the new day
+        root.setCalMonthFromKey(now)
         root.refreshAll()
       }
     }
@@ -678,11 +635,11 @@ Panel {
     interval: 1500
     running: true
     triggeredOnStart: false
-    onTriggered: streakFile.reload()
+    onTriggered: activityFile.reload()
   }
 
   Component.onCompleted: {
-    streakFile.reload()
+    activityFile.reload()
     Qt.callLater(checkReminder)
   }
 
@@ -695,21 +652,18 @@ Panel {
     function hide(): void { root.close() }
     function toggle(): void { root.toggle() }
     function refresh(): void { root.refreshAll() }
-    function verse(): void { root.sendNotification(root.notificationText) }
     function play(): void { root.togglePlayback() }
     function stop(): void { root.stopPlayback() }
-    function markRead(): void { root.markRead() }
 
     function debug(): string {
       return JSON.stringify({
         viewing: viewingKey,
         today: todayK,
-        votd: !!votd,
+        dayTitle: root.dayTitle,
         readingsKeys: Object.keys(readingsByDate),
         readingsPhase: root.readingsPhase,
-        podKeys: Object.keys(podcastByKey),
-        podStatus: podcastStatus,
-        podProcRunning: podcastProc.running,
+        podcastDays: Object.keys(podcastByDate).length,
+        podcastProcRunning: podcastProc.running,
         playing: playing,
         paused: paused,
         playingKey: playingKey,
@@ -859,11 +813,14 @@ Panel {
       anchors.fill: parent
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
-      onReturnRequested: root.markRead()
+      onReturnRequested: root.selectDay(root.todayK)
       onMoveRequested: function(dx, dy) {
         if (dx !== 0 && root.readingTabs.length > 1) {
           var next = root.activeTab + dx
-          if (next >= 0 && next < root.readingTabs.length) root.selectedSection = next
+          if (next >= 0 && next < root.readingTabs.length) {
+            root.selectedSection = next
+            root.noteTabViewed(root.readingTabs[next].label)
+          }
           return
         }
         if (dy !== 0) {
@@ -886,95 +843,130 @@ Panel {
           width: bibleScroll.width
           spacing: Style.space(14)
 
-          // ---- Header: section caption.
-          Item {
-            width: parent.width
-            height: Style.space(18)
-
-            Text {
-              anchors.left: parent.left
-              anchors.leftMargin: Style.space(16)
-              anchors.verticalCenter: parent.verticalCenter
-              text: "VERSE OF THE DAY"
-              color: Qt.darker(root.bar.foreground, 1.5)
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.bodySmall
-              font.letterSpacing: 1
-            }
-          }
-
-          // ---- Hero: verse of the day.
+          // ---- Month calendar: liturgical colours, done rings, day picker.
           Column {
+            id: calBlock
             width: parent.width
-            spacing: Style.space(10)
+            spacing: Style.space(6)
 
-            Text {
-              x: Style.space(16)
-              width: parent.width - Style.space(32)
-              text: votd ? votd.text : (votdLoading ? "Fetching verse\u2026" : "Verse of the day unavailable offline")
-              color: root.bar.foreground
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.heading
-              font.italic: true
-              wrapMode: Text.WordWrap
-            }
+            readonly property int firstWeekday: new Date(calYear, calMonth, 1).getDay()
+            readonly property int daysInMonth: new Date(calYear, calMonth + 1, 0).getDate()
+            readonly property real cellWidth: (width - Style.space(32)) / 7
 
             Item {
-              x: Style.space(16)
-              width: parent.width - Style.space(32)
+              width: parent.width
               height: Style.space(22)
 
-              Row {
+              NavButton {
+                glyph: "<"
+                active: root.calMonthIndex > root.calMinIndex
+                tooltipText: "Previous month"
+                onActivated: root.setCalMonthIndex(root.calMonthIndex - 1)
                 anchors.left: parent.left
+                anchors.leftMargin: Style.space(16)
                 anchors.verticalCenter: parent.verticalCenter
-                spacing: Style.space(8)
+              }
+
+              Text {
+                anchors.centerIn: parent
+                text: (Model.MONTHS[root.calMonth] + " " + root.calYear).toUpperCase()
+                color: Qt.darker(root.bar.foreground, 1.4)
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.body
+                font.letterSpacing: 1
+              }
+
+              NavButton {
+                glyph: ">"
+                active: root.calMonthIndex < root.calMaxIndex
+                tooltipText: "Next month"
+                onActivated: root.setCalMonthIndex(root.calMonthIndex + 1)
+                anchors.right: parent.right
+                anchors.rightMargin: Style.space(16)
+                anchors.verticalCenter: parent.verticalCenter
+              }
+            }
+
+            Grid {
+              x: Style.space(16)
+              width: parent.width - Style.space(32)
+              columns: 7
+              spacing: Style.space(2)
+
+              Repeater {
+                model: ["S", "M", "T", "W", "T", "F", "S"]
 
                 Text {
-                  text: votd ? votd.reference.toUpperCase() : ""
-                  color: Qt.darker(root.bar.foreground, 1.4)
-                  font.family: root.bar.fontFamily
-                  font.pixelSize: Style.font.bodySmall
-                  font.letterSpacing: 1
-                }
-
-                Text {
-                  visible: votd && votd.version !== ""
-                  text: votd ? votd.version : ""
+                  required property string modelData
+                  width: calBlock.cellWidth
+                  horizontalAlignment: Text.AlignHCenter
+                  text: modelData
                   color: Qt.darker(root.bar.foreground, 1.5)
                   font.family: root.bar.fontFamily
-                  font.pixelSize: Style.font.bodySmall
+                  font.pixelSize: Style.font.caption
                 }
               }
 
-              Rectangle {
-                id: copyVotdButton
-                anchors.right: parent.right
-                anchors.verticalCenter: parent.verticalCenter
-                width: copyVotdLabel.implicitWidth + Style.space(16)
-                height: Style.space(20)
-                radius: Style.cornerRadius
-                color: votdCopied ? Style.selectedFillFor(root.bar.foreground, Color.accent)
-                  : (copyVotdArea.containsMouse ? Style.hoverFillFor(root.bar.foreground, Color.accent) : "transparent")
-                border.width: votdCopied ? 0 : 1
-                border.color: Qt.alpha(root.bar.foreground, 0.35)
+              Repeater {
+                model: calBlock.firstWeekday + calBlock.daysInMonth
 
-                Text {
-                  id: copyVotdLabel
-                  anchors.centerIn: parent
-                  text: votdCopied ? "COPIED" : "COPY"
-                  color: root.bar.foreground
-                  font.family: root.bar.fontFamily
-                  font.pixelSize: Style.font.caption
-                  font.letterSpacing: 1
-                }
+                Item {
+                  id: dayCell
+                  required property int index
+                  width: calBlock.cellWidth
+                  height: Style.space(28)
 
-                MouseArea {
-                  id: copyVotdArea
-                  anchors.fill: parent
-                  hoverEnabled: true
-                  enabled: !!votd
-                  cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                  onClicked: root.copyVotd()
+                  readonly property int dayNumber: index + 1 - calBlock.firstWeekday
+                  readonly property string dateKey: dayNumber >= 1
+                    ? root.calYear + "-" + Model.pad2(root.calMonth + 1) + "-" + Model.pad2(dayNumber) : ""
+                  readonly property var meta: dayNumber >= 1 ? Cal.get(dateKey) : null
+                  readonly property bool isToday: dateKey === root.todayK
+                  readonly property bool isSelected: dateKey === root.viewingKey
+                  readonly property bool isDone: dateKey !== "" && root.isDone(dateKey)
+                  readonly property bool available: dateKey !== "" && root.contentAvailable(dateKey)
+                  readonly property color dayTint: meta ? Model.liturgicalColourHex(meta.colour) : root.bar.foreground
+
+                  visible: dayNumber >= 1
+
+                  Rectangle {
+                    anchors.fill: parent
+                    anchors.margins: Style.space(1)
+                    radius: Style.cornerRadius
+                    color: dayCell.isSelected ? Style.selectedFillFor(root.bar.foreground, Color.accent)
+                      : (dayCell.available && dayArea.containsMouse ? Style.hoverFillFor(root.bar.foreground, Color.accent) : "transparent")
+                    border.width: dayCell.isDone ? 1 : 0
+                    // Faint green ring: this day has been read or listened to.
+                    border.color: Qt.alpha("#6f996f", 0.55)
+                  }
+
+                  Rectangle {
+                    anchors.fill: parent
+                    anchors.margins: Style.space(1)
+                    radius: Style.cornerRadius
+                    color: "transparent"
+                    border.width: dayCell.isToday && !dayCell.isSelected ? 1 : 0
+                    border.color: Qt.alpha(root.bar.foreground, 0.5)
+                  }
+
+                  Text {
+                    anchors.centerIn: parent
+                    visible: dayCell.dayNumber >= 1
+                    text: dayCell.dayNumber >= 1 ? dayCell.dayNumber : ""
+                    color: dayCell.dayTint
+                    opacity: dayCell.available ? 1 : 0.4
+                    font.family: root.bar.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    font.bold: dayCell.isToday || dayCell.isSelected
+                  }
+
+                  MouseArea {
+                    id: dayArea
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    enabled: dayCell.available
+                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                    onClicked: root.selectDay(dayCell.dateKey)
+                  }
                 }
               }
             }
@@ -982,7 +974,7 @@ Panel {
 
           Hairline {}
 
-          // ---- Liturgical day, colour chip, rank.
+          // ---- Liturgical day title and colour chip.
           Item {
             width: parent.width
             height: Style.space(20)
@@ -993,7 +985,7 @@ Panel {
               anchors.right: headerChips.left
               anchors.rightMargin: Style.space(10)
               anchors.verticalCenter: parent.verticalCenter
-              text: (currentReadings && currentReadings.title ? currentReadings.title : Model.longDate(viewingKey)).toUpperCase()
+              text: root.dayTitle.toUpperCase()
               color: Qt.darker(root.bar.foreground, 1.4)
               font.family: root.bar.fontFamily
               font.pixelSize: Style.font.body
@@ -1009,7 +1001,7 @@ Panel {
               spacing: Style.space(8)
 
               Rectangle {
-                visible: currentReadings && currentReadings.colour !== ""
+                visible: dayMeta && dayMeta.colour !== ""
                 width: seasonLabel.implicitWidth + Style.space(14)
                 height: Style.space(18)
                 radius: height / 2
@@ -1019,21 +1011,12 @@ Panel {
                 Text {
                   id: seasonLabel
                   anchors.centerIn: parent
-                  text: (currentReadings ? currentReadings.colour : "").toUpperCase()
+                  text: (dayMeta ? dayMeta.colour : "").toUpperCase()
                   color: liturgicalColor
                   font.family: root.bar.fontFamily
                   font.pixelSize: Style.font.caption
                   font.letterSpacing: 1
                 }
-              }
-
-              Text {
-                visible: currentReadings && currentReadings.rank !== ""
-                text: currentReadings ? currentReadings.rank : ""
-                color: Qt.darker(root.bar.foreground, 1.5)
-                font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.caption
-                anchors.verticalCenter: parent.verticalCenter
               }
             }
           }
@@ -1077,7 +1060,10 @@ Panel {
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: root.selectedSection = index
+                    onClicked: {
+                      root.selectedSection = index
+                      root.noteTabViewed(modelData.label)
+                    }
                   }
                 }
               }
@@ -1120,29 +1106,36 @@ Panel {
                 }
               }
 
-              NavButton {
-                glyph: "<"
-                active: root.canGoBack
-                tooltipText: "Previous day"
-                onActivated: root.navigate(-1)
+              Rectangle {
+                id: todayJumpButton
                 anchors.verticalCenter: parent.verticalCenter
-              }
+                width: todayJumpLabel.implicitWidth + Style.space(14)
+                height: Style.space(20)
+                radius: Style.cornerRadius
+                color: todayJumpArea.containsMouse ? Style.hoverFillFor(root.bar.foreground, Color.accent) : "transparent"
+                border.width: 1
+                border.color: Qt.alpha(root.bar.foreground, 0.35)
 
-              Text {
-                text: (viewingKey === root.todayK ? "TODAY" : Model.shortDate(viewingKey))
-                color: root.bar.foreground
-                font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.caption
-                font.letterSpacing: 1
-                anchors.verticalCenter: parent.verticalCenter
-              }
+                Text {
+                  id: todayJumpLabel
+                  anchors.centerIn: parent
+                  text: "TODAY"
+                  color: root.bar.foreground
+                  font.family: root.bar.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.letterSpacing: 1
+                }
 
-              NavButton {
-                glyph: ">"
-                active: root.canGoForward
-                tooltipText: "Next day"
-                onActivated: root.navigate(1)
-                anchors.verticalCenter: parent.verticalCenter
+                MouseArea {
+                  id: todayJumpArea
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: {
+                    root.setCalMonthFromKey(root.todayK)
+                    root.selectDay(root.todayK)
+                  }
+                }
               }
             }
           }
@@ -1193,12 +1186,10 @@ Panel {
                   width: bibleColumn.width - Style.space(32)
                   text: modelData.text
                   color: root.bar.foreground
-                  opacity: modelData.kind === "heading" ? 0.85 : 1
                   font.family: root.bar.fontFamily
-                  font.pixelSize: modelData.kind === "heading" ? Style.font.subtitle : Style.font.body
-                  font.italic: modelData.italic === true || modelData.kind === "heading"
+                  font.pixelSize: Style.font.body
+                  font.italic: modelData.italic === true
                   wrapMode: Text.WordWrap
-                  leftPadding: modelData.kind === "verse-indent" ? Style.space(18) : 0
                 }
               }
             }
@@ -1206,7 +1197,7 @@ Panel {
 
           Text {
             x: Style.space(16)
-            visible: readingsPhase === "loading"
+            visible: !currentReadings && !readingsFeedFetched && readingsProc.running
             text: "Fetching readings\u2026"
             color: Qt.darker(root.bar.foreground, 1.5)
             font.family: root.bar.fontFamily
@@ -1216,18 +1207,18 @@ Panel {
 
           Text {
             x: Style.space(16)
-            visible: readingsPhase === "error"
-            text: "Readings unavailable \u2014 check connection"
+            visible: !currentReadings && readingsFeedFetched && !readingsProc.running
+            text: "Readings text unavailable for this date \u2014 see bible.usccb.org"
             color: Qt.darker(root.bar.foreground, 1.5)
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.bodySmall
             font.italic: true
           }
 
-          // ---- Saint of the day.
+          // ---- Saint / feast of the day (from the bundled calendar).
           Row {
             x: Style.space(16)
-            visible: currentReadings && currentReadings.saint !== ""
+            visible: dayMeta && dayMeta.saint !== ""
             spacing: Style.space(8)
 
             Text {
@@ -1239,7 +1230,7 @@ Panel {
             }
 
             Text {
-              text: (currentReadings ? currentReadings.saint : "") + (currentReadings && currentReadings.rank !== "" ? " \u00B7 " + currentReadings.rank : "")
+              text: dayMeta ? dayMeta.saint : ""
               color: Qt.darker(root.bar.foreground, 1.4)
               font.family: root.bar.fontFamily
               font.pixelSize: Style.font.bodySmall
@@ -1438,117 +1429,6 @@ Panel {
 
           Hairline {}
 
-          // ---- Streak footer.
-          Item {
-            width: parent.width
-            height: Style.space(44)
-
-            Row {
-              anchors.left: parent.left
-              anchors.leftMargin: Style.space(16)
-              anchors.verticalCenter: parent.verticalCenter
-              spacing: Style.space(36)
-
-              Column {
-                spacing: Style.space(3)
-
-                Item {
-                  width: Style.space(70)
-                  height: Style.font.icon
-
-                  Text {
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: "STREAK"
-                    color: Qt.darker(root.bar.foreground, 1.5)
-                    font.family: root.bar.fontFamily
-                    font.pixelSize: Style.font.bodySmall
-                    font.letterSpacing: 1
-                  }
-                }
-
-                Text {
-                  text: streakDays + (streakDays === 1 ? " day" : " days")
-                  color: root.bar.foreground
-                  font.family: root.bar.fontFamily
-                  font.pixelSize: Style.font.title
-                }
-              }
-
-              Column {
-                spacing: Style.space(3)
-
-                Item {
-                  width: Style.space(70)
-                  height: Style.font.icon
-
-                  Text {
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: "BEST"
-                    color: Qt.darker(root.bar.foreground, 1.5)
-                    font.family: root.bar.fontFamily
-                    font.pixelSize: Style.font.bodySmall
-                    font.letterSpacing: 1
-                  }
-                }
-
-                Text {
-                  text: streakState.best + (streakState.best === 1 ? " day" : " days")
-                  color: root.bar.foreground
-                  font.family: root.bar.fontFamily
-                  font.pixelSize: Style.font.title
-                }
-              }
-            }
-
-            Rectangle {
-              id: markButton
-              anchors.right: parent.right
-              anchors.rightMargin: Style.space(16)
-              anchors.verticalCenter: parent.verticalCenter
-              width: markRow.implicitWidth + Style.space(24)
-              height: Style.space(30)
-              radius: Style.cornerRadius
-              color: markedToday ? Style.selectedFillFor(root.bar.foreground, Color.accent)
-                : (markArea.containsMouse ? Style.hoverFillFor(root.bar.foreground, Color.accent) : "transparent")
-              border.width: markedToday ? 0 : 1
-              border.color: Qt.alpha(root.bar.foreground, 0.35)
-
-              Row {
-                id: markRow
-                anchors.centerIn: parent
-                spacing: Style.space(6)
-
-                Text {
-                  text: markedToday ? "\uDB81\uDDE0" : "\uDB81\uDDE1"
-                  color: root.bar.foreground
-                  font.family: root.bar.fontFamily
-                  font.pixelSize: Style.font.bodySmall
-                  anchors.verticalCenter: parent.verticalCenter
-                }
-
-                Text {
-                  text: markedToday ? "DONE" : "MARK AS DONE"
-                  color: root.bar.foreground
-                  font.family: root.bar.fontFamily
-                  font.pixelSize: Style.font.caption
-                  font.letterSpacing: 1
-                  anchors.verticalCenter: parent.verticalCenter
-                }
-              }
-
-              MouseArea {
-                id: markArea
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: {
-                  root.markRead() // no-op once today is already marked
-                  root.close() // clicking DONE also tidies the widget away
-                }
-              }
-            }
-          }
-
           // ---- Credits: data sources, copyright, and links.
           Column {
             width: parent.width
@@ -1591,36 +1471,29 @@ Panel {
               spacing: Style.space(3)
 
               CreditLine {
-                prefix: "Readings: "
-                linkText: "universalis.com"
-                url: "https://universalis.com/mass.htm"
-                suffix: " \u2014 Jerusalem Bible \u00A9 Darton, Longman & Todd"
+                prefix: "Readings text: "
+                linkText: "bible.usccb.org"
+                url: "https://bible.usccb.org/bible/readings"
+                suffix: " \u2014 NAB-RE \u00A9 Confraternity of Christian Doctrine; refrains \u00A9 ICEL"
               }
 
               CreditLine {
-                prefix: "Verse of the day: "
-                linkText: "OurManna.com"
-                url: "https://www.ourmanna.com"
-                suffix: ""
-              }
-
-              CreditLine {
-                prefix: "Verse fallback: "
-                linkText: "bible-api.com"
-                url: "https://bible-api.com"
-                suffix: " (public domain translations)"
-              }
-
-              CreditLine {
-                prefix: "Podcast: "
+                prefix: "Readings audio: "
                 linkText: "USCCB Daily Mass Reading Podcast"
                 url: "https://bible.usccb.org/podcasts/audio"
                 suffix: " \u2014 \u00A9 USCCB, official feed"
               }
 
+              CreditLine {
+                prefix: "Liturgical calendar: "
+                linkText: "romcal"
+                url: "https://github.com/romcal/romcal"
+                suffix: " (MIT)"
+              }
+
               Text {
                 width: parent.width
-                text: "For personal devotion. Not affiliated with or endorsed by these organisations; scripture remains \u00A9 its publishers."
+                text: "For personal devotion. Not affiliated with or endorsed by the USCCB; text shown per the USCCB RSS policy and \u00A9 its publishers."
                 color: Qt.darker(root.bar.foreground, 1.5)
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.caption

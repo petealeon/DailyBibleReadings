@@ -1,6 +1,6 @@
-// Data helpers for peter.bible: date math, OurManna VOTD parsing, Universalis
-// readings HTML parsing, USCCB/SoundCloud podcast RSS matching, rosary
-// mysteries, and streak state transitions.
+// Data helpers for peter.bible: date math, USCCB Daily Readings RSS parsing
+// (full NAB-RE text), USCCB/SoundCloud podcast RSS matching, rosary mysteries,
+// and per-day activity state.
 
 // ---------------------------------------------------------------- dates
 
@@ -50,6 +50,8 @@ function monthDayYear(key) {
 
 function decodeEntities(s) {
   return String(s || "")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
     .replace(/&#x([0-9a-fA-F]+);/g, function(m, h) { return String.fromCodePoint(parseInt(h, 16)) })
     .replace(/&#(\d+);/g, function(m, d) { return String.fromCodePoint(parseInt(d, 10)) })
     .replace(/&nbsp;/g, " ")
@@ -71,147 +73,117 @@ function trimWords(s, max) {
   return (cut > max / 3 ? s.slice(0, cut) : s.slice(0, max)) + "\u2026"
 }
 
-// ------------------------------------------------------------ verse of day
+// ------------------------------------------------------- USCCB readings RSS
 
-// beta.ourmanna.com/api/v1/get/?format=json
-function parseManna(raw) {
-  try {
-    var data = JSON.parse(String(raw || ""))
-    var details = data && data.verse && data.verse.details
-    if (!details || !details.text) return null
-    return {
-      text: String(details.text).replace(/\s+/g, " ").trim(),
-      reference: String(details.reference || "").trim(),
-      version: String(details.version || "NIV").trim()
+// Official USCCB Daily Readings feed: full NAB-RE text, ~10-day rolling window.
+// Display of this feed is permitted by the USCCB RSS policy for free,
+// non-gated services; text is fetched per-user at runtime and cached locally.
+function usccbRss() {
+  return "https://bible.usccb.org/bible/readings/rss/index.cfm"
+}
+
+// Parse the feed into { byDate: {key: parsed}, order: [keys] } where parsed is
+// { title, sections: [{label, citation, lines: [{text, italic}]}], memorials }.
+function parseUsccbRss(xml) {
+  var out = { byDate: {}, order: [] }
+  xml = String(xml || "")
+  var items = xml.match(/<item>[\s\S]*?<\/item>/gi) || []
+
+  for (var i = 0; i < items.length; i++) {
+    var item = items[i]
+    var parsed = parseUsccbItem(item)
+    if (parsed && parsed.key && parsed.ok && !out.byDate[parsed.key]) {
+      out.byDate[parsed.key] = parsed
+      out.order.push(parsed.key)
     }
-  } catch (e) {
-    return null
   }
-}
-
-// Offline fallback pool: deterministic pick by day-of-year keeps the verse
-// stable for the whole day without any network dependency. References are
-// resolved through bible-api.com when the manna API is unreachable.
-var FALLBACK_VERSES = [
-  "John 3:16", "Psalm 23:1", "Romans 8:28", "Philippians 4:13", "Proverbs 3:5",
-  "Isaiah 40:31", "Jeremiah 29:11", "Matthew 6:33", "Psalm 46:1", "1 Corinthians 13:4",
-  "Hebrews 11:1", "James 1:5", "Psalm 119:105", "Ephesians 2:8", "Galatians 5:22",
-  "Isaiah 41:10", "Joshua 1:9", "Psalm 27:1", "Matthew 11:28", "Romans 12:2",
-  "Zephaniah 3:17", "Psalm 34:8", "Lamentations 3:22", "Micah 6:8", "Psalm 121:1",
-  "John 14:27", "1 Peter 5:7", "Colossians 3:23", "Psalm 139:14", "Proverbs 16:3",
-  "Isaiah 26:3", "Matthew 5:16", "Romans 15:13", "Psalm 91:1", "1 John 4:19",
-  "Philippians 4:6", "Psalm 37:4", "2 Corinthians 5:17", "Psalm 100:4", "John 15:5",
-  "Psalm 63:1", "Deuteronomy 31:6", "Psalm 51:10", "Mark 12:30", "Luke 1:46",
-  "Acts 1:8", "Psalm 84:11", "Nahum 1:7", "Exodus 14:14", "Psalm 118:24",
-  "1 Corinthians 16:14", "Psalm 145:8", "Isaiah 43:1", "Matthew 28:19", "Psalm 62:1",
-  "Romans 8:38", "Psalm 19:8", "John 8:12", "Psalm 133:1", "1 Samuel 16:7",
-  "Hosea 6:3", "Psalm 147:3", "Amos 5:24", "Revelation 21:4"
-]
-
-function fallbackReference(key) {
-  var d = keyToDate(key)
-  var start = new Date(d.getFullYear(), 0, 0)
-  var dayOfYear = Math.floor((d - start) / 86400000)
-  return FALLBACK_VERSES[dayOfYear % FALLBACK_VERSES.length]
-}
-
-function bibleApiUrl(reference, translation) {
-  return "https://bible-api.com/" + encodeURIComponent(reference)
-    + "?translation=" + encodeURIComponent(translation || "web")
-}
-
-function parseBibleApi(raw, referenceHint) {
-  try {
-    var data = JSON.parse(String(raw || ""))
-    if (!data || !data.text) return null
-    return {
-      text: String(data.text).replace(/\s+/g, " ").trim(),
-      reference: String(data.reference || referenceHint || "").trim(),
-      version: String((data.translation_name || "WEB")).trim()
-    }
-  } catch (e) {
-    return null
-  }
-}
-
-// ------------------------------------------------------- universalis readings
-
-function universalisUrl(key) {
-  var d = keyToDate(key)
-  return "https://universalis.com/" + d.getFullYear() + pad2(d.getMonth() + 1) + pad2(d.getDate()) + "/mass.htm"
-}
-
-function parseUniversalis(html) {
-  var out = { ok: false, dateLine: "", title: "", rank: "", colour: "", year: "", saint: "", sections: [] }
-  html = String(html || "")
-  if (html.length < 200) return out
-
-  var m = html.match(/<tt>([\s\S]*?)<\/tt>/i)
-  out.dateLine = m ? textOf(m[1]) : ""
-
-  var h1idx = html.search(/<h1[^>]*>\s*Readings at Mass/i)
-  var head = h1idx > 0 ? html.slice(0, h1idx) : ""
-  m = head.match(/<strong[^>]*>([\s\S]*?)<\/strong>/i)
-  out.title = m ? textOf(m[1]) : ""
-  m = head.match(/<br\s*\/?>\s*<span[^>]*>([\s\S]*?)<\/span>/i)
-  out.rank = m ? textOf(m[1]) : ""
-
-  m = html.match(/Liturgical Colour:\s*([A-Za-z ]+?)\.\s*Year:\s*([A-Za-z0-9() ]+?)\./i)
-  if (!m) m = html.match(/Liturgical Colour:\s*([A-Za-z ]+)/i)
-  out.colour = m ? m[1].trim() : ""
-  if (m && m.length > 2) out.year = m[2].trim()
-
-  // Saint of the day only when the feast honours one.
-  out.saint = /^saint|st\.?\s/i.test(out.title) ? out.title.replace(/\s*\([^)]*\)\s*$/, "") : ""
-
-  var startIdx = 0
-  if (h1idx >= 0) {
-    var close = html.indexOf("</h1>", h1idx)
-    startIdx = close >= 0 ? close + 5 : h1idx
-  }
-  var rest = html.slice(startIdx)
-  var endMatch = rest.search(/<h2[\s>]|<!--\s*Delta/i)
-  var body = endMatch >= 0 ? rest.slice(0, endMatch) : rest
-  var chunks = body.split(/<hr[^>]*>/i)
-
-  for (var i = 0; i < chunks.length; i++) {
-    var chunk = chunks[i]
-    var labelM = chunk.match(/<th[^>]*align="left"[^>]*>([\s\S]*?)<\/th>/i)
-    if (!labelM) continue
-    var section = { label: textOf(labelM[1]), citation: "", lines: [] }
-    var citeM = chunk.match(/<th[^>]*align="right"[^>]*>([\s\S]*?)<\/th>/i)
-    if (citeM) section.citation = textOf(citeM[1])
-
-    var headingM = chunk.match(/<h4[^>]*>([\s\S]*?)<\/h4>/i)
-    if (headingM) section.lines.push({ text: textOf(headingM[1]), kind: "heading" })
-
-    var divRe = /<(div)\s+class="([^"]*)"([^>]*)>([\s\S]*?)<\/div>/gi
-    var dm
-    while ((dm = divRe.exec(chunk)) !== null) {
-      var cls = dm[2]
-      if (/audioclip/.test(cls)) continue
-      var inner = dm[4]
-      var italic = /^\s*<i[\s>][\s\S]*<\/i>\s*$/.test(inner)
-      var text = textOf(inner)
-      if (!text) continue
-      var kind = /(^|\s)vi(\s|$)/.test(cls) ? "verse-indent" : ((/(^|\s)v(\s|$)/.test(cls)) ? "verse" : "prose")
-      // Collapse consecutive identical responses (psalms repeat them).
-      var prev = section.lines[section.lines.length - 1]
-      if (prev && prev.text === text) continue
-      section.lines.push({ text: text, kind: kind, italic: italic })
-    }
-
-    if (section.label.toLowerCase().indexOf("copyright") < 0)
-      out.sections.push(section)
-  }
-
-  out.ok = out.sections.length > 0
+  out.order.sort()
   return out
 }
 
-// Group parsed sections into three display tabs. The Gospel Acclamation is
-// merged ahead of the Gospel text; empty groups are dropped so, e.g., a
-// Gospel-only day renders a single tab.
+function parseUsccbItem(item) {
+  var titleM = item.match(/<title>([\s\S]*?)<\/title>/i)
+  var descM = item.match(/<description>([\s\S]*?)<\/description>/i)
+  if (!descM) return null
+
+  var key = dateKeyFromItem(item)
+  if (!key) return null
+
+  var html = decodeEntities(descM[1])
+
+  // Optional memorials are listed as nested links before the readings.
+  var memorials = []
+  var nested = html.match(/<ul class="nested">([\s\S]*?)<\/ul>/i)
+  if (nested) {
+    var links = nested[1].match(/<a[^>]*>([\s\S]*?)<\/a>/gi) || []
+    for (var n = 0; n < links.length; n++) {
+      var name = textOf(links[n])
+      if (name) memorials.push(name.replace(/^Readings for the /i, ""))
+    }
+    html = html.replace(/<ul class="nested">[\s\S]*?<\/ul>/i, "")
+  }
+
+  // Everything after the "- - -" separator is the copyright block; drop it.
+  var cut = html.indexOf("- - -")
+  if (cut >= 0) html = html.slice(0, cut)
+
+  var sections = []
+  var chunks = html.split(/<h4[^>]*>/i)
+  for (var c = 1; c < chunks.length; c++) {
+    var close = chunks[c].indexOf("</h4>")
+    if (close < 0) continue
+    var header = chunks[c].slice(0, close)
+    var body = chunks[c].slice(close + 5)
+
+    var citeM = header.match(/<a[^>]*>([\s\S]*?)<\/a>/i)
+    var label = textOf(header.replace(/<a[^>]*>[\s\S]*?<\/a>/i, ""))
+    var citation = citeM ? textOf(citeM[1]) : ""
+    if (!label) continue
+
+    var section = { label: label, citation: citation, lines: [] }
+    var paras = body.match(/<p[^>]*>([\s\S]*?)<\/p>/gi) || []
+    for (var p = 0; p < paras.length; p++) {
+      var inner = paras[p].replace(/<\/?p[^>]*>/gi, "")
+      var rawLines = inner.split(/<br\s*\/?>/i)
+      for (var l = 0; l < rawLines.length; l++) {
+        var line = textOf(rawLines[l])
+        if (!line) continue
+        // Collapse consecutive identical responses (psalm/alleluia refrains).
+        var prev = section.lines[section.lines.length - 1]
+        if (prev && prev.text === line) continue
+        var italic = /<em[\s>]/i.test(rawLines[l])
+        section.lines.push({ text: line, italic: italic })
+      }
+    }
+    if (section.lines.length > 0) sections.push(section)
+  }
+
+  return {
+    key: key,
+    title: titleM ? textOf(titleM[1]) : "",
+    sections: sections,
+    memorials: memorials,
+    ok: sections.length > 0
+  }
+}
+
+// Prefer the MMDDYY.cfm pattern in the link/guid (no timezone ambiguity);
+// fall back to the item's pubDate interpreted as a local date.
+function dateKeyFromItem(item) {
+  var m = item.match(/(\d{2})(\d{2})(\d{2})\.cfm/)
+  if (m) return "20" + m[3] + "-" + m[1] + "-" + m[2]
+  var pub = item.match(/<pubDate>([\s\S]*?)<\/pubDate>/i)
+  if (pub) {
+    var d = new Date(pub[1])
+    if (!isNaN(d.getTime()))
+      return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate())
+  }
+  return ""
+}
+
+// Group parsed sections into three display tabs. The Alleluia/Gospel
+// Acclamation is merged ahead of the Gospel text; empty groups are dropped so
+// a Gospel-only day renders a single tab.
 function buildReadingTabs(sections) {
   var groups = [
     { key: "reading", label: "READING", sections: [] },
@@ -225,8 +197,8 @@ function buildReadingTabs(sections) {
     var label = String(sections[j].label || "")
     var key
     if (/responsorial|psalm/i.test(label)) key = "psalm"
-    else if (/acclamation|alleluia|sequence|tract/i.test(label)) key = "gospel"
-    else if (/gospel/i.test(label)) key = "gospel"
+    else if (/reading/i.test(label)) key = "reading"
+    else if (/alleluia|acclamation|gospel/i.test(label)) key = "gospel"
     else key = "reading"
     byKey[key].sections.push(sections[j])
   }
@@ -248,9 +220,10 @@ function readingsToText(title, sections) {
   return out.join("\n")
 }
 
-// Liturgical colour → accent chip colors (kept muted to sit inside any theme).
-function seasonColor(colourName) {
-  var c = String(colourName || "").toLowerCase()
+// Liturgical colour name (from the bundled calendar) → muted accent hex that
+// sits comfortably inside any theme.
+function liturgicalColourHex(name) {
+  var c = String(name || "").toLowerCase()
   if (c.indexOf("red") >= 0) return "#b05252"
   if (c.indexOf("green") >= 0) return "#6f996f"
   if (c.indexOf("violet") >= 0 || c.indexOf("purple") >= 0) return "#9678b0"
@@ -266,26 +239,32 @@ function podcastRss() {
   return "https://feeds.soundcloud.com/users/soundcloud:users:838970026/sounds.rss"
 }
 
-function matchPodcast(xml, key) {
+// Parse the whole podcast feed into { dateKey: {title, url, durationSeconds} }.
+// Episode titles carry the date: "Daily Mass Reading Podcast for August 26, 2026".
+function matchAllPodcasts(xml) {
   xml = String(xml || "")
   if (!xml) return null
-  var want = ("for " + monthDayYear(key)).toLowerCase()
   var items = xml.match(/<item>[\s\S]*?<\/item>/gi) || []
+  var out = {}
   for (var i = 0; i < items.length; i++) {
     var item = items[i]
     var titleM = item.match(/<title>([\s\S]*?)<\/title>/i)
     var title = titleM ? textOf(titleM[1]) : ""
-    if (title.toLowerCase().indexOf(want) < 0) continue
+    var dateM = title.match(/for\s+([A-Za-z]+\s+\d{1,2},\s*\d{4})/i)
+    if (!dateM) continue
+    var d = new Date(dateM[1])
+    if (isNaN(d.getTime())) continue
+    var key = d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate())
     var encM = item.match(/<enclosure[^>]*url="([^"]+)"/i)
     if (!encM) continue
     var durM = item.match(/<itunes:duration>([\s\S]*?)<\/itunes:duration>/i)
-    return {
+    out[key] = {
       title: title,
       url: encM[1],
       durationSeconds: durationToSeconds(durM ? textOf(durM[1]) : "")
     }
   }
-  return null
+  return Object.keys(out).length > 0 ? out : null
 }
 
 function durationToSeconds(s) {
@@ -307,7 +286,7 @@ function formatDuration(totalSeconds) {
 var MYSTERY_SETS = {
   joyful: ["The Annunciation", "The Visitation", "The Nativity", "The Presentation", "The Finding in the Temple"],
   sorrowful: ["The Agony in the Garden", "The Scourging at the Pillar", "The Crowning with Thorns", "The Carrying of the Cross", "The Crucifixion"],
-  glorious: ["The Resurrection", "The Ascension", "The Descent of the Holy Spirit", "The Assumption", "The Coronation of Mary"],
+  glorious: ["The Resurrection", "The Ascension", "The Descent of the Holy Spirit", "The Assumption of Mary", "The Coronation of Mary"],
   luminous: ["The Baptism of the Lord", "The Wedding at Cana", "The Proclamation of the Kingdom", "The Transfiguration", "The Institution of the Eucharist"]
 }
 
@@ -324,38 +303,25 @@ function rosaryMysteries(key) {
   }
 }
 
-// ------------------------------------------------------------------ streak
+// --------------------------------------------------------------- activity
 
-function emptyStreak() {
-  return { count: 0, best: 0, lastMarked: "", lastReminder: "" }
+// Per-day interaction state: { done: {key: true}, viewedTabs: {key: [labels]},
+// lastNotified: key }. A day becomes done when its podcast is played or all of
+// its reading tabs have been opened.
+function emptyActivity() {
+  return { done: {}, viewedTabs: {}, lastNotified: "" }
 }
 
-function parseStreakFile(raw) {
+function parseActivityFile(raw) {
   try {
     var data = JSON.parse(String(raw || ""))
-    if (!data || typeof data !== "object") return emptyStreak()
+    if (!data || typeof data !== "object") return emptyActivity()
     return {
-      count: parseInt(data.count, 10) || 0,
-      best: parseInt(data.best, 10) || 0,
-      lastMarked: typeof data.lastMarked === "string" ? data.lastMarked : "",
-      lastReminder: typeof data.lastReminder === "string" ? data.lastReminder : ""
+      done: data.done && typeof data.done === "object" ? data.done : {},
+      viewedTabs: data.viewedTabs && typeof data.viewedTabs === "object" ? data.viewedTabs : {},
+      lastNotified: typeof data.lastNotified === "string" ? data.lastNotified : ""
     }
   } catch (e) {
-    return emptyStreak()
-  }
-}
-
-// Marking read on a fresh day extends an unbroken chain; anything else
-// restarts at 1. Returns the full next state to persist.
-function markRead(state, todayK) {
-  var s = state || emptyStreak()
-  if (s.lastMarked === todayK) return s
-  var yesterday = shiftKey(todayK, -1)
-  var count = (s.lastMarked === yesterday) ? s.count + 1 : 1
-  return {
-    count: count,
-    best: Math.max(s.best || 0, count),
-    lastMarked: todayK,
-    lastReminder: s.lastReminder || ""
+    return emptyActivity()
   }
 }

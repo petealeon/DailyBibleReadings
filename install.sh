@@ -45,12 +45,12 @@ if (( ${#missing[@]} > 0 )); then
 fi
 
 # ---- files ------------------------------------------------------------------
-for f in manifest.json BarWidget.qml Panel.qml Model.js; do
+for f in manifest.json BarWidget.qml Panel.qml Model.js LectionaryCalendar.js; do
   [[ -f $SRC/$f ]] || fail "missing $SRC/$f — run this from the plugin repo"
 done
 
 mkdir -p "$DEST"
-for f in manifest.json BarWidget.qml Panel.qml Model.js; do
+for f in manifest.json BarWidget.qml Panel.qml Model.js LectionaryCalendar.js; do
   cp "$SRC/$f" "$DEST/$f"
 done
 echo "Installed plugin files into $DEST"
