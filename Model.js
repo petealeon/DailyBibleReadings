@@ -46,6 +46,16 @@ function monthDayYear(key) {
   return MONTHS[d.getMonth()] + " " + d.getDate() + ", " + d.getFullYear()
 }
 
+// Per-day readings page on the bishops' site, in the MMDDYY.cfm form the
+// RSS items already embed (see dateKeyFromItem). History and scheduled days
+// outside the ~10-day feed window stay reachable through this public page.
+function usccbDayUrl(key) {
+  var parts = String(key || "").split("-")
+  if (parts.length !== 3) return "https://bible.usccb.org/bible/readings"
+  return "https://bible.usccb.org/bible/readings/"
+    + pad2(parseInt(parts[1], 10)) + pad2(parseInt(parts[2], 10)) + parts[0].slice(2) + ".cfm"
+}
+
 // ------------------------------------------------------------- entities/text
 
 function decodeEntities(s) {
@@ -63,6 +73,25 @@ function decodeEntities(s) {
 
 function textOf(html) {
   return decodeEntities(String(html || "").replace(/<[^>]*>/g, "")).replace(/\s+/g, " ").trim()
+}
+
+// Split an HTML line into styled runs [{text, italic}] preserving <em>
+// boundaries, so prose reflow can keep word-level italics. Runs outside any
+// <em> keep italic=false; a run's text is the tag-stripped, whitespace-
+// collapsed text (joining runs with a single space reproduces textOf(line)).
+function lineRunsOf(html) {
+  var runs = []
+  var italic = false
+  var parts = String(html || "").split(/(<em\b[^>]*>|<\/em>)/gi)
+  for (var i = 0; i < parts.length; i++) {
+    var part = parts[i]
+    if (/^<em\b/i.test(part)) { italic = true; continue }
+    if (part === "</em>") { italic = false; continue }
+    var text = textOf(part)
+    if (!text) continue
+    runs.push({ text: text, italic: italic })
+  }
+  return runs
 }
 
 // Trim at a word boundary so notifications never cut scripture mid-word.
@@ -83,7 +112,9 @@ function usccbRss() {
 }
 
 // Parse the feed into { byDate: {key: parsed}, order: [keys] } where parsed is
-// { title, sections: [{label, citation, lines: [{text, italic}]}], memorials }.
+// { title, sections: [{label, citation, lines: [{text, italic, par, runs}]}],
+//   memorials }. lines[].runs carries word-level italics for prose reflow;
+// lines[].par is the <p> paragraph index the line belongs to.
 function parseUsccbRss(xml) {
   var out = { byDate: {}, order: [] }
   xml = String(xml || "")
@@ -146,13 +177,15 @@ function parseUsccbItem(item) {
       var inner = paras[p].replace(/<\/?p[^>]*>/gi, "")
       var rawLines = inner.split(/<br\s*\/?>/i)
       for (var l = 0; l < rawLines.length; l++) {
-        var line = textOf(rawLines[l])
-        if (!line) continue
+        var runs = lineRunsOf(rawLines[l])
+        if (runs.length === 0) continue
+        var line = runs.map(function(r) { return r.text }).join(" ")
         // Collapse consecutive identical responses (psalm/alleluia refrains).
         var prev = section.lines[section.lines.length - 1]
         if (prev && prev.text === line) continue
-        var italic = /<em[\s>]/i.test(rawLines[l])
-        section.lines.push({ text: line, italic: italic })
+        var italic = false
+        for (var r = 0; r < runs.length; r++) if (runs[r].italic) { italic = true; break }
+        section.lines.push({ text: line, italic: italic, par: p, runs: runs })
       }
     }
     if (section.lines.length > 0) sections.push(section)

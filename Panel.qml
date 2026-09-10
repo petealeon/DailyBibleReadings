@@ -89,10 +89,13 @@ Panel {
   readonly property var readingTabs: currentReadings ? Model.buildReadingTabs(currentReadings.sections) : []
   readonly property int activeTab: Math.max(0, Math.min(selectedSection, readingTabs.length - 1))
 
+  onSelectedSectionChanged: Qt.callLater(recomputeWrapped)
   onViewingKeyChanged: {
     selectedSection = 0
     bibleScroll.contentY = 0
+    Qt.callLater(recomputeWrapped)
   }
+  onDataRevisionChanged: Qt.callLater(recomputeWrapped)
   readonly property var currentReadings: {
     void root.dataRevision
     return root.readingsByDate[root.viewingKey] || null
@@ -146,6 +149,10 @@ Panel {
   }
 
   readonly property color liturgicalColor: dayMeta ? Model.liturgicalColourHex(dayMeta.colour) : "transparent"
+
+  // Fixed-height podcast transport bar pinned below the scrolling content.
+  readonly property real playerBarHeight: Style.space(38) + Style.spacing.hairline
+  readonly property string playerBarContext: Model.longDate(viewingKey).toUpperCase()
 
   // ---------------------------------------------------------------- utils
 
@@ -559,7 +566,6 @@ Panel {
   function selectDay(key) {
     if (!key || key === viewingKey) return
     if (key < Cal.minDate() || key > Cal.maxDate()) return
-    if (!contentAvailable(key)) return
     viewingKey = key
     ensurePodcast(false)
     followPlayback()
@@ -575,9 +581,24 @@ Panel {
     else stopPlayback()
   }
 
-  // A day is clickable when its readings text or its podcast is in hand.
-  function contentAvailable(key) {
-    return !!readingsByDate[key] || !!podcastByDate[key]
+  // Bitmask of the day's available content: 2 = reading text, 1 = podcast
+  // episode. Liturgical info exists for every day in the bundled range, so
+  // this governs what a calendar click can deliver: text+audio, audio only,
+  // or liturgy plus an "open in browser" affordance.
+  function dayContentKind(key) {
+    var kind = 0
+    if (readingsByDate[key]) kind += 2
+    if (podcastByDate[key]) kind += 1
+    return kind
+  }
+
+  // Open the day's public readings page. History and scheduled days live
+  // outside the ~10-day feed window, so the browser is the honest way to
+  // read them.
+  function openDayReadings(key) {
+    var url = Model.usccbDayUrl(key)
+    if (!Qt.openUrlExternally(url) && root.bar)
+      root.bar.run("xdg-open \"" + url + "\"")
   }
 
   // Calendar month being viewed.
@@ -647,6 +668,7 @@ Panel {
   Component.onCompleted: {
     activityFile.reload()
     Qt.callLater(checkReminder)
+    Qt.callLater(recomputeWrapped)
   }
 
   function debugText() {
@@ -799,7 +821,7 @@ Panel {
     centerOnBar: true
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(500))
-    contentHeight: panel.fittedContentHeight(bibleColumn.implicitHeight)
+    contentHeight: panel.fittedContentHeight(bibleColumn.implicitHeight + root.playerBarHeight)
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -822,9 +844,14 @@ Panel {
         }
       }
 
+      Column {
+        id: contentStack
+        anchors.fill: parent
+
       Flickable {
         id: bibleScroll
-        anchors.fill: parent
+        width: parent.width
+        height: Math.max(0, parent.height - root.playerBarHeight)
         contentWidth: width
         contentHeight: bibleColumn.implicitHeight
         clip: true
@@ -835,6 +862,7 @@ Panel {
           id: bibleColumn
           width: bibleScroll.width
           spacing: Style.space(10)
+          onWidthChanged: Qt.callLater(recomputeWrapped)
 
           // ---- Month calendar: liturgical colours, done rings, day picker.
           Column {
@@ -877,6 +905,30 @@ Panel {
                 anchors.right: parent.right
                 anchors.rightMargin: Style.space(12)
                 anchors.verticalCenter: parent.verticalCenter
+              }
+
+              Row {
+                anchors.right: parent.right
+                anchors.rightMargin: Style.space(46)
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: Style.space(10)
+
+                Row {
+                  spacing: Style.space(3)
+                  Text {
+                    text: "\uDB81\uDC0A"
+                    color: Qt.darker(root.bar.foreground, 1.2)
+                    opacity: 0.8
+                    font.family: root.bar.fontFamily
+                    font.pixelSize: Style.font.caption
+                  }
+                  Text {
+                    text: "Podcast only"
+                    color: Qt.darker(root.bar.foreground, 1.5)
+                    font.family: root.bar.fontFamily
+                    font.pixelSize: Style.font.caption
+                  }
+                }
               }
             }
 
@@ -922,7 +974,8 @@ Panel {
                   readonly property bool isToday: dateKey === root.todayK
                   readonly property bool isSelected: dateKey === root.viewingKey
                   readonly property bool isDone: dateKey !== "" && root.isDone(dateKey)
-                  readonly property bool available: dateKey !== "" && root.contentAvailable(dateKey)
+                  readonly property int contentKind: dateKey !== "" ? root.dayContentKind(dateKey) : 0
+                  readonly property bool hasContent: dayCell.contentKind > 0
                   readonly property color dayTint: meta ? Model.liturgicalColourHex(meta.colour) : root.bar.foreground
 
                   visible: dayNumber >= 1
@@ -932,18 +985,17 @@ Panel {
                     anchors.margins: 0
                     radius: Style.cornerRadius
                     color: dayCell.isSelected ? Style.selectedFillFor(root.bar.foreground, Color.accent)
-                      : (dayCell.available && dayArea.containsMouse ? Style.hoverFillFor(root.bar.foreground, Color.accent) : "transparent")
-                    border.width: dayCell.isDone ? 1 : 0
-                    border.color: Qt.alpha("#6f996f", 0.55)
+                      : (dayCell.hasContent && dayArea.containsMouse ? Style.hoverFillFor(root.bar.foreground, Color.accent) : "transparent")
                   }
 
                   Rectangle {
-                    anchors.fill: parent
-                    anchors.margins: 0
-                    radius: Style.cornerRadius
-                    color: "transparent"
-                    border.width: dayCell.isToday && !dayCell.isSelected ? 1 : 0
-                    border.color: Qt.alpha(root.bar.foreground, 0.5)
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    height: 2
+                    radius: 1
+                    visible: dayCell.isDone
+                    color: Qt.alpha("#6f996f", 0.9)
                   }
 
                   Text {
@@ -951,18 +1003,44 @@ Panel {
                     visible: dayCell.dayNumber >= 1
                     text: dayCell.dayNumber >= 1 ? dayCell.dayNumber : ""
                     color: dayCell.dayTint
-                    opacity: dayCell.available ? 1 : 0.4
+                    opacity: dayCell.hasContent ? 1 : 0.4
                     font.family: root.bar.fontFamily
                     font.pixelSize: Style.font.bodySmall
                     font.bold: dayCell.isToday || dayCell.isSelected
+                  }
+
+                  Row {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    y: parent.height - Style.space(10)
+                    spacing: Style.space(2)
+                    height: Style.space(11)
+
+                    Text {
+                      visible: dayCell.contentKind === 1 && !dayCell.isDone && !dayCell.isToday
+                      text: "\uDB81\uDC0A"
+                      color: root.bar.foreground
+                      font.family: root.bar.fontFamily
+                      font.pixelSize: Style.font.caption
+                      opacity: 0.8
+                    }
+                  }
+
+                  Rectangle {
+                    anchors.centerIn: parent
+                    width: Style.space(20)
+                    height: Style.space(20)
+                    radius: height / 2
+                    visible: dayCell.isToday
+                    color: "transparent"
+                    border.width: 1
+                    border.color: Qt.alpha(root.bar.foreground, 0.45)
                   }
 
                   MouseArea {
                     id: dayArea
                     anchors.fill: parent
                     hoverEnabled: true
-                    enabled: dayCell.available
-                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                    cursorShape: Qt.PointingHandCursor
                     onClicked: root.selectDay(dayCell.dateKey)
                   }
                 }
@@ -972,23 +1050,39 @@ Panel {
 
           Hairline {}
 
-          // ---- Liturgical day title and colour chip.
+          // ---- Liturgical day title, date, saint, and colour chip.
           Item {
             width: parent.width
-            height: Style.space(20)
+            height: Style.space(40)
 
-            Text {
+            Column {
               anchors.left: parent.left
               anchors.leftMargin: Style.space(16)
               anchors.right: headerChips.left
               anchors.rightMargin: Style.space(10)
               anchors.verticalCenter: parent.verticalCenter
-              text: root.dayTitle.toUpperCase()
-              color: Qt.darker(root.bar.foreground, 1.4)
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.body
-              font.letterSpacing: 1
-              elide: Text.ElideRight
+              spacing: Style.space(3)
+
+              Text {
+                width: parent.width
+                text: root.dayTitle.toUpperCase()
+                color: Qt.darker(root.bar.foreground, 1.4)
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.body
+                font.letterSpacing: 1
+                elide: Text.ElideRight
+              }
+
+              Text {
+                width: parent.width
+                text: dayMeta && dayMeta.saint !== ""
+                  ? Model.longDate(viewingKey) + "  \u00B7  " + dayMeta.saint
+                  : Model.longDate(viewingKey)
+                color: Qt.darker(root.bar.foreground, 1.5)
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.caption
+                elide: Text.ElideRight
+              }
             }
 
             Row {
@@ -1103,44 +1197,15 @@ Panel {
                   onClicked: root.copyReadings()
                 }
               }
-
-              Rectangle {
-                id: todayJumpButton
-                anchors.verticalCenter: parent.verticalCenter
-                width: todayJumpLabel.implicitWidth + Style.space(14)
-                height: Style.space(20)
-                radius: Style.cornerRadius
-                color: todayJumpArea.containsMouse ? Style.hoverFillFor(root.bar.foreground, Color.accent) : "transparent"
-                border.width: 1
-                border.color: Qt.alpha(root.bar.foreground, 0.35)
-
-                Text {
-                  id: todayJumpLabel
-                  anchors.centerIn: parent
-                  text: "TODAY"
-                  color: root.bar.foreground
-                  font.family: root.bar.fontFamily
-                  font.pixelSize: Style.font.caption
-                  font.letterSpacing: 1
-                }
-
-                MouseArea {
-                  id: todayJumpArea
-                  anchors.fill: parent
-                  hoverEnabled: true
-                  cursorShape: Qt.PointingHandCursor
-                  onClicked: {
-                    root.setCalMonthFromKey(root.todayK)
-                    root.selectDay(root.todayK)
-                  }
-                }
-              }
             }
           }
 
-          // ---- Active tab content.
+          // ---- Active tab content. Layout data (header fit + wrapped verse
+          // lines) is precomputed in recomputeWrapped() so the rendering
+          // bindings stay read-only — writing TextMetrics from a binding
+          // causes QML binding loops that hang the shell.
           Repeater {
-            model: root.readingTabs.length > 0 ? root.readingTabs[root.activeTab].sections : []
+            model: root.wrappedSections
 
             Column {
               required property var modelData
@@ -1148,30 +1213,46 @@ Panel {
               spacing: 0
 
               Item {
+                id: sectionHeader
                 width: parent.width
-                height: Style.space(22)
+
+                readonly property bool fits: modelData.fits
+                readonly property string headerCite: modelData.citation
+                readonly property real avail: width - Style.space(32)
+                height: fits ? Style.space(22) : Style.space(36)
 
                 Text {
                   anchors.left: parent.left
                   anchors.leftMargin: Style.space(16)
-                  anchors.verticalCenter: parent.verticalCenter
-                  text: modelData.label.toUpperCase()
+                  anchors.top: parent.top
+                  anchors.topMargin: sectionHeader.fits ? Style.space(5) : Style.space(2)
+                  width: sectionHeader.fits
+                    ? Math.max(0, sectionHeader.avail - (sectionHeader.headerCite ? modelData.citeW + Style.space(6) : 0))
+                    : sectionHeader.avail
+                  text: modelData.label
                   color: Qt.darker(root.bar.foreground, 1.4)
                   font.family: root.bar.fontFamily
                   font.pixelSize: Style.font.bodySmall
                   font.letterSpacing: 1
+                  elide: Text.ElideRight
                 }
 
                 Text {
-                  visible: modelData.citation !== ""
+                  visible: sectionHeader.headerCite !== ""
                   anchors.right: parent.right
                   anchors.rightMargin: Style.space(16)
-                  anchors.verticalCenter: parent.verticalCenter
-                  text: modelData.citation
+                  anchors.top: parent.top
+                  anchors.topMargin: sectionHeader.fits ? Style.space(4) : Style.space(24)
+                  width: sectionHeader.fits
+                    ? Math.min(modelData.citeW, sectionHeader.avail - modelData.labelW - Style.space(6))
+                    : sectionHeader.avail
+                  horizontalAlignment: sectionHeader.fits ? Text.AlignRight : Text.AlignLeft
+                  text: sectionHeader.headerCite
                   color: Qt.darker(root.bar.foreground, 1.5)
                   font.family: root.bar.fontFamily
                   font.pixelSize: Style.font.bodySmall
                   font.italic: true
+                  elide: sectionHeader.fits ? Text.ElideLeft : Text.ElideRight
                 }
               }
 
@@ -1180,27 +1261,45 @@ Panel {
               Repeater {
                 model: modelData.lines
 
-                Text {
+                Column {
+                  id: verseLine
                   required property var modelData
-                  x: Style.space(16)
-                  width: bibleColumn.width - Style.space(32)
-                  text: modelData.text
-                  color: root.bar.foreground
-                  font.family: root.bar.fontFamily
-                  font.pixelSize: Style.font.body
-                  font.italic: modelData.italic === true
-                  wrapMode: Text.WordWrap
+                  required property int index
+                  width: bibleColumn.width
+                  spacing: 0
+
+                  Item {
+                    width: parent.width
+                    height: verseLine.modelData.paraGap === true ? Style.space(6) : 0
+                  }
+
+                  Repeater {
+                    model: verseLine.modelData.parts
+
+                    Text {
+                      x: Style.space(16) + (verseLine.modelData.rich === true ? 0 : (index > 0 ? root.verseIndent : 0))
+                      width: bibleColumn.width - Style.space(32) - (verseLine.modelData.rich === true ? 0 : (index > 0 ? root.verseIndent : 0))
+                      text: modelData
+                      textFormat: verseLine.modelData.rich === true ? Text.RichText : Text.AutoText
+                      color: root.bar.foreground
+                      font.family: root.bar.fontFamily
+                      font.pixelSize: Style.font.body
+                      font.italic: verseLine.modelData.rich === true ? false : (verseLine.modelData.italic === true)
+                      wrapMode: Text.WordWrap
+                    }
+                  }
                 }
               }
             }
           }
 
-          // ---- Loading / unavailable states for readings text.
+          // ---- Loading / unavailable states for readings text. Days outside the
+          // ~10-day feed window offer the public page instead.
           Column {
             x: Style.space(16)
             width: parent.width - Style.space(32)
             visible: !currentReadings
-            spacing: Style.space(4)
+            spacing: Style.space(8)
 
             Text {
               visible: readingsProc.running
@@ -1213,7 +1312,7 @@ Panel {
 
             Text {
               visible: !readingsProc.running
-              text: "Readings text not available for this date.\nFull readings are available for the most recent days at bible.usccb.org"
+              text: "Reading text is available for the last two weeks at bible.usccb.org"
               color: Qt.darker(root.bar.foreground, 1.5)
               font.family: root.bar.fontFamily
               font.pixelSize: Style.font.bodySmall
@@ -1221,28 +1320,33 @@ Panel {
               wrapMode: Text.WordWrap
               width: parent.width
             }
-          }
 
-          // ---- Saint / feast of the day (from the bundled calendar).
-          Row {
-            x: Style.space(16)
-            visible: dayMeta && dayMeta.saint !== ""
-            spacing: Style.space(8)
+            Rectangle {
+              visible: !readingsProc.running
+              width: readOnlineLabel.implicitWidth + Style.space(16)
+              height: Style.space(20)
+              radius: Style.cornerRadius
+              color: readOnlineArea.containsMouse ? Style.hoverFillFor(root.bar.foreground, Color.accent) : "transparent"
+              border.width: 1
+              border.color: Qt.alpha(root.bar.foreground, 0.35)
 
-            Text {
-              text: "\uDB81\uDD79"
-              color: Qt.darker(root.bar.foreground, 1.4)
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.body
-              anchors.verticalCenter: parent.verticalCenter
-            }
+              Text {
+                id: readOnlineLabel
+                anchors.centerIn: parent
+                text: "READ ONLINE"
+                color: root.bar.foreground
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.caption
+                font.letterSpacing: 1
+              }
 
-            Text {
-              text: dayMeta ? dayMeta.saint : ""
-              color: Qt.darker(root.bar.foreground, 1.4)
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.bodySmall
-              anchors.verticalCenter: parent.verticalCenter
+              MouseArea {
+                id: readOnlineArea
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.openDayReadings(root.viewingKey)
+              }
             }
           }
 
@@ -1296,141 +1400,6 @@ Panel {
                   font.family: root.bar.fontFamily
                   font.pixelSize: Style.font.bodySmall
                 }
-              }
-            }
-          }
-
-          Hairline {}
-
-          // ---- Podcast row: transport controls, title, progress, download.
-          Column {
-            width: parent.width
-            spacing: Style.space(6)
-
-            Item {
-              width: parent.width
-              height: Style.space(38)
-
-              Row {
-                id: transportRow
-                anchors.left: parent.left
-                anchors.leftMargin: Style.space(16)
-                anchors.verticalCenter: parent.verticalCenter
-                spacing: Style.space(6)
-
-                TransportButton {
-                  glyph: "\uDB81\uDCAE"
-                  enabled: root.playing
-                  tooltipText: "Back to start"
-                  onActivated: root.seekToStart()
-                  anchors.verticalCenter: parent.verticalCenter
-                }
-
-                TransportButton {
-                  glyph: "\uDB83\uDD2A"
-                  enabled: root.playing
-                  tooltipText: "Back 10 seconds"
-                  onActivated: root.seekBack10()
-                  anchors.verticalCenter: parent.verticalCenter
-                }
-
-                Rectangle {
-                  id: playButton
-                  anchors.verticalCenter: parent.verticalCenter
-                  width: Style.space(34)
-                  height: Style.space(34)
-                  radius: height / 2
-                  color: playArea.containsMouse && playArea.enabled ? Style.hoverFillFor(root.bar.foreground, Color.accent) : Style.normalFillFor(root.bar.foreground, Color.accent)
-                  border.width: 1
-                  border.color: Qt.alpha(root.bar.foreground, 0.3)
-
-                  Text {
-                    anchors.centerIn: parent
-                    text: root.playing && !root.paused ? "\uDB80\uDFE4" : "\uDB81\uDC0A"
-                    color: root.bar.foreground
-                    font.family: root.bar.fontFamily
-                    font.pixelSize: Style.font.iconLarge
-                  }
-
-                  MouseArea {
-                    id: playArea
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    enabled: !!root.currentPodcast
-                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                    onClicked: root.togglePlayback()
-                  }
-
-                  PanelToolTip {
-                    visible: playArea.containsMouse && playArea.enabled
-                    text: root.playing && !root.paused ? "Pause podcast" : (root.paused ? "Resume podcast" : "Listen to this day's readings")
-                    fontFamily: root.bar.fontFamily
-                  }
-                }
-              }
-
-              TransportButton {
-                id: downloadButton
-                anchors.right: parent.right
-                anchors.rightMargin: Style.space(16)
-                anchors.verticalCenter: parent.verticalCenter
-                glyph: "\u2193"
-                enabled: !!root.currentPodcast && !root.downloading
-                tooltipText: "Download episode"
-                onActivated: root.downloadPodcast()
-              }
-
-              Column {
-                anchors.left: transportRow.right
-                anchors.leftMargin: Style.space(10)
-                anchors.right: durationLabel.left
-                anchors.rightMargin: Style.space(8)
-                anchors.verticalCenter: parent.verticalCenter
-                spacing: Style.space(4)
-
-                Text {
-                  width: parent.width
-                  text: currentPodcast ? currentPodcast.title
-                    : (podcastPhase === "loading" ? "Finding today's podcast\u2026"
-                    : podcastPhase === "error" ? "No podcast found for this date" : "Daily Mass Reading Podcast")
-                  color: root.bar.foreground
-                  font.family: root.bar.fontFamily
-                  font.pixelSize: Style.font.bodySmall
-                  elide: Text.ElideRight
-                }
-
-                PanelSlider {
-                  id: seekSlider
-                  width: parent.width
-                  visible: !!currentPodcast
-                  height: Style.space(14)
-                  bar: root.bar
-                  enabled: root.playing
-                  opacity: root.playing ? 1 : 0.45
-                  value: root.playbackRatio
-
-                  onReleased: function(v) { root.seekToRatio(v) }
-
-                  Connections {
-                    target: root
-                    function onPlaybackRatioChanged() {
-                      if (!seekSlider.dragging) seekSlider.value = root.playbackRatio
-                    }
-                  }
-                }
-              }
-
-              Text {
-                id: durationLabel
-                anchors.right: downloadButton.left
-                anchors.rightMargin: Style.space(10)
-                anchors.verticalCenter: parent.verticalCenter
-                text: currentPodcast
-                  ? Model.formatDuration(root.elapsedSeconds) + " / " + Model.formatDuration(root.displayTotalSeconds)
-                  : ""
-                color: Qt.darker(root.bar.foreground, 1.5)
-                font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.bodySmall
               }
             }
           }
@@ -1511,10 +1480,291 @@ Panel {
           }
         }
       }
+
+      Column {
+        id: playerBar
+        width: parent.width
+        height: root.playerBarHeight
+
+        Hairline {}
+
+        Item {
+          width: parent.width
+          height: Style.space(38)
+
+          Row {
+            id: transportRow
+            anchors.left: parent.left
+            anchors.leftMargin: Style.space(16)
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.space(6)
+
+            TransportButton {
+              glyph: "\uDB81\uDCAE"
+              enabled: root.playing
+              tooltipText: "Back to start"
+              onActivated: root.seekToStart()
+              anchors.verticalCenter: parent.verticalCenter
+            }
+
+            TransportButton {
+              glyph: "\uDB83\uDD2A"
+              enabled: root.playing
+              tooltipText: "Back 10 seconds"
+              onActivated: root.seekBack10()
+              anchors.verticalCenter: parent.verticalCenter
+            }
+
+            Rectangle {
+              id: playButton
+              anchors.verticalCenter: parent.verticalCenter
+              width: Style.space(34)
+              height: Style.space(34)
+              radius: height / 2
+              color: playArea.containsMouse && playArea.enabled ? Style.hoverFillFor(root.bar.foreground, Color.accent) : Style.normalFillFor(root.bar.foreground, Color.accent)
+              border.width: 1
+              border.color: Qt.alpha(root.bar.foreground, 0.3)
+
+              Text {
+                anchors.centerIn: parent
+                text: root.playing && !root.paused ? "\uDB80\uDFE4" : "\uDB81\uDC0A"
+                color: root.bar.foreground
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.iconLarge
+              }
+
+              MouseArea {
+                id: playArea
+                anchors.fill: parent
+                hoverEnabled: true
+                enabled: !!root.currentPodcast
+                cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                onClicked: root.togglePlayback()
+              }
+
+              PanelToolTip {
+                visible: playArea.containsMouse && playArea.enabled
+                text: root.playing && !root.paused ? "Pause podcast" : (root.paused ? "Resume podcast" : "Listen to this day's readings")
+                fontFamily: root.bar.fontFamily
+              }
+            }
+          }
+
+          TransportButton {
+            id: downloadButton
+            anchors.right: parent.right
+            anchors.rightMargin: Style.space(16)
+            anchors.verticalCenter: parent.verticalCenter
+            glyph: "\u2193"
+            enabled: !!root.currentPodcast && !root.downloading
+            tooltipText: "Download episode"
+            onActivated: root.downloadPodcast()
+          }
+
+          Column {
+            anchors.left: transportRow.right
+            anchors.leftMargin: Style.space(10)
+            anchors.right: durationLabel.left
+            anchors.rightMargin: Style.space(8)
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.space(4)
+
+            Text {
+              width: parent.width
+              text: podcastPhase === "loading" ? "Finding today's podcast\u2026"
+                : podcastPhase === "error" ? "No podcast found for this date"
+                : root.playerBarContext
+              color: root.bar.foreground
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              elide: Text.ElideRight
+            }
+
+            PanelSlider {
+              id: seekSlider
+              width: parent.width
+              visible: !!currentPodcast
+              height: Style.space(14)
+              bar: root.bar
+              enabled: root.playing
+              opacity: root.playing ? 1 : 0.45
+              value: root.playbackRatio
+
+              onReleased: function(v) { root.seekToRatio(v) }
+
+              Connections {
+                target: root
+                function onPlaybackRatioChanged() {
+                  if (!seekSlider.dragging) seekSlider.value = root.playbackRatio
+                }
+              }
+            }
+          }
+
+          Text {
+            id: durationLabel
+            anchors.right: downloadButton.left
+            anchors.rightMargin: Style.space(10)
+            anchors.verticalCenter: parent.verticalCenter
+            text: currentPodcast
+              ? Model.formatDuration(root.elapsedSeconds) + " / " + Model.formatDuration(root.displayTotalSeconds)
+              : ""
+            color: Qt.darker(root.bar.foreground, 1.5)
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.bodySmall
+          }
+        }
+      }
     }
+  }
   }
 
   // --------------------------------------------------------- ui helpers
+
+  // Measurement primitive for reading-column layout. It is written ONLY
+  // from recomputeWrapped() (a signal handler), never from a property
+  // binding — writing text/font inside a binding evaluation makes the QML
+  // engine report a binding loop and hang the shell.
+  TextMetrics {
+    id: readingMetrics
+  }
+
+  // 1em hanging indent for wrapped verse lines.
+  readonly property real verseIndent: Style.space(12)
+
+  // Plain-text wrapper around TextMetrics.advanceWidth. The font scratch
+  // state lives entirely in JS so no QML binding depends on it.
+  function measureWidth(text, pixelSize, italic) {
+    readingMetrics.font.pixelSize = pixelSize
+    readingMetrics.font.italic = italic === true
+    readingMetrics.text = String(text || "")
+    return readingMetrics.advanceWidth
+  }
+
+  // Greedy-word-wrap a feed line into visual sub-lines. Continuation lines
+  // after the first are budgeted at `width - verseIndent` (the caller
+  // offsets them by that much) → true hanging indent. A single word wider
+  // than the whole line is left to WordWrap in the rendered Text.
+  //
+  // Orphan control: unless this is the section's true final line, a greedy
+  // wrap that would strand 1-2 words on the last sub-line (e.g. "...heaven
+  // and" / "on earth") is re-wrapped with a smaller continuation budget so
+  // words flow back and the tail carries at least three words.
+  function wrapReadingLine(text, italic, width, isFinal) {
+    var words = String(text || "").split(/\s+/)
+    var out = root.greedyWrapReadingLine(words, italic, width)
+    if (out.length > 1 && !(isFinal === true) && out[out.length - 1].split(/\s+/).length <= 2) {
+      var first = width - root.styleStep
+      var guard = 0
+      while (guard++ < 50) {
+        var attempt = root.greedyWrapReadingLine(words, italic, first)
+        if (attempt.length > out.length) break
+        out = attempt
+        if (out[out.length - 1].split(/\s+/).length >= 3) break
+        first -= root.styleStep
+      }
+    }
+    return out
+  }
+
+  // px subtracted per orphan-reduction step. Moving the wrap point earlier
+  // (via a tighter first line) pushes the stranded words back into the tail.
+  readonly property real styleStep: Math.max(2, Style.space(2))
+
+  function greedyWrapReadingLine(words, italic, firstBudget) {
+    var out = []
+    var cur = ""
+    var budget = firstBudget
+    for (var i = 0; i < words.length; i++) {
+      var probe = cur ? cur + " " + words[i] : words[i]
+      if (cur && root.measureWidth(probe, Style.font.body, italic) > budget) {
+        out.push(cur)
+        budget = firstBudget - root.verseIndent
+        cur = words[i]
+      } else {
+        cur = probe
+      }
+    }
+    if (cur) out.push(cur)
+    return out
+  }
+
+  // Escape plain text for the RichText paragraphs below (line.rich parts).
+  function escapeHtml(text) {
+    return String(text || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+  }
+
+  // Build one rich-HTML paragraph string per <p> group: the section's lines
+  // are joined with single spaces (source <br> breaks are dropped), italic
+  // runs get <i>, and paragraph boundaries come from line.par. Returns one
+  // HTML string per paragraph, in feed order.
+  function proseParagraphsHtml(sec) {
+    var paras = []
+    for (var l = 0; l < sec.lines.length; l++) {
+      var line = sec.lines[l]
+      var par = (line.par !== undefined && line.par !== null) ? (line.par | 0) : 0
+      if (paras.length === 0 || paras[paras.length - 1].par !== par) paras.push({ par: par, html: "" })
+      var runs = line.runs && line.runs.length ? line.runs : [{ text: line.text, italic: line.italic === true }]
+      for (var r = 0; r < runs.length; r++) {
+        var bits = String(runs[r].text || "").split(/\s+/)
+        for (var b = 0; b < bits.length; b++) {
+          if (!bits[b]) continue
+          var last = paras[paras.length - 1]
+          if (last.html) last.html += " "
+          var esc = root.escapeHtml(bits[b])
+          last.html += runs[r].italic === true ? "<i>" + esc + "</i>" : esc
+        }
+      }
+    }
+    return paras.map(function(p) { return p.html })
+  }
+
+  // Recompute the per-section display data (header fit decision + wrapped
+  // verse lines / reflowed prose paragraphs). Called from signal handlers and
+  // dataRevision bumps, not from bindings, so the TextMetrics writes below
+  // cannot form a loop.
+  property var wrappedSections: []
+  function recomputeWrapped() {
+    var tab = root.readingTabs.length > 0 ? root.readingTabs[root.activeTab] : null
+    var out = []
+    if (tab) {
+      var avail = bibleColumn.width - Style.space(32)
+      for (var s = 0; s < tab.sections.length; s++) {
+        var sec = tab.sections[s]
+        var label = String(sec.label || "").toUpperCase()
+        var cite = sec.citation || ""
+        var labelW = root.measureWidth(label, Style.font.bodySmall, false)
+        var citeW = cite ? root.measureWidth(cite, Style.font.bodySmall, true) : 0
+        var fits = labelW + (cite ? Style.space(16) + citeW : 0) <= avail
+        var lines = []
+        var verse = /responsorial|psalm|alleluia|acclamation/i.test(String(sec.label || ""))
+        if (verse) {
+          // Poetry keeps its feed lines as-is (wrap with hanging indent).
+          for (var l = 0; l < sec.lines.length; l++) {
+            lines.push({
+              italic: sec.lines[l].italic === true,
+              parts: root.wrapReadingLine(sec.lines[l].text, sec.lines[l].italic === true, avail, l === sec.lines.length - 1)
+            })
+          }
+        } else {
+          // Prose reflows to flowing paragraphs: each <p> group is one RichText
+          // blob that Qt's text engine wraps naturally (source <br> breaks are
+          // dropped), with a small gap between paragraphs (set on non-first).
+          var htmls = root.proseParagraphsHtml(sec)
+          for (var q = 0; q < htmls.length; q++) {
+            if (!htmls[q]) continue
+            lines.push({
+              rich: true,
+              paraGap: q > 0,
+              parts: [htmls[q]]
+            })
+          }
+        }
+        out.push({ label: label, citation: cite, labelW: labelW, citeW: citeW, fits: fits, lines: lines })
+      }
+    }
+    root.wrappedSections = out
+  }
 
   property bool rosaryExpanded: false
   property bool creditsExpanded: false
