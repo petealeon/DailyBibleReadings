@@ -1,4 +1,6 @@
 import QtQuick
+import Quickshell
+import Quickshell.Io
 import qs.Commons
 import qs.Ui
 
@@ -22,6 +24,18 @@ BarWidget {
 
   function togglePanel() {
     if (panelLoader.item && panelLoader.item.toggle) panelLoader.item.toggle()
+  }
+
+  function play() {
+    if (panelLoader.item && panelLoader.item.togglePlayback) panelLoader.item.togglePlayback()
+  }
+
+  function stop() {
+    if (panelLoader.item && panelLoader.item.stopPlayback) panelLoader.item.stopPlayback()
+  }
+
+  function debug() {
+    return panelLoader.item && panelLoader.item.debugText ? panelLoader.item.debugText() : ""
   }
 
   // Shape contract for shell.summon/hide/toggle routing (Bar.findPanelWidget
@@ -58,6 +72,20 @@ BarWidget {
       root.injectPanel()
       Qt.callLater(root.injectPanel)
     }
+  }
+
+  IpcHandler {
+    target: root.moduleName
+
+    function open(): void { root.open() }
+    function close(): void { root.close() }
+    function show(): void { root.open() }
+    function hide(): void { root.close() }
+    function toggle(): void { root.togglePanel() }
+    function refresh(): void { root.broadcast("refresh") }
+    function play(): void { root.play() }
+    function stop(): void { root.stop() }
+    function debug(): string { return root.debug() }
   }
 
   BarIconButton {

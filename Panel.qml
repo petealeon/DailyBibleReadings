@@ -40,7 +40,7 @@ Panel {
 
   function toggle() {
     if (root.opened) root.close()
-    else root.openFromHotkey()
+    else root.open()
   }
 
   function switchPanel(direction) {
@@ -50,6 +50,10 @@ Panel {
   }
 
   function setCenterHoverRevealSuppressed(value) {
+    if (root.bar && typeof root.bar.setCenterHoverRevealSuppressed === "function") {
+      root.bar.setCenterHoverRevealSuppressed(value)
+      return
+    }
     if (root.bar && "centerHoverRevealSuppressed" in root.bar)
       root.bar.centerHoverRevealSuppressed = value
   }
@@ -635,7 +639,7 @@ Panel {
 
   Timer {
     interval: 1500
-    running: true
+    running: root.opened
     triggeredOnStart: false
     onTriggered: activityFile.reload()
   }
@@ -645,35 +649,22 @@ Panel {
     Qt.callLater(checkReminder)
   }
 
-  IpcHandler {
-    target: root.ipcTarget
-
-    function open(): void { root.openFromHotkey() }
-    function close(): void { root.close() }
-    function show(): void { root.openFromHotkey() }
-    function hide(): void { root.close() }
-    function toggle(): void { root.toggle() }
-    function refresh(): void { root.refreshAll() }
-    function play(): void { root.togglePlayback() }
-    function stop(): void { root.stopPlayback() }
-
-    function debug(): string {
-      return JSON.stringify({
-        viewing: viewingKey,
-        today: todayK,
-        dayTitle: root.dayTitle,
-        readingsKeys: Object.keys(readingsByDate),
-        readingsPhase: root.readingsPhase,
-        podcastDays: Object.keys(podcastByDate).length,
-        podcastProcRunning: podcastProc.running,
-        playing: playing,
-        paused: paused,
-        playingKey: playingKey,
-        elapsed: elapsedSeconds,
-        duration: liveDurationSeconds,
-        ratio: Math.round(root.playbackRatio * 1000) / 1000
-      })
-    }
+  function debugText() {
+    return JSON.stringify({
+      viewing: viewingKey,
+      today: todayK,
+      dayTitle: root.dayTitle,
+      readingsKeys: Object.keys(readingsByDate),
+      readingsPhase: root.readingsPhase,
+      podcastDays: Object.keys(podcastByDate).length,
+      podcastProcRunning: podcastProc.running,
+      playing: playing,
+      paused: paused,
+      playingKey: playingKey,
+      elapsed: elapsedSeconds,
+      duration: liveDurationSeconds,
+      ratio: Math.round(root.playbackRatio * 1000) / 1000
+    })
   }
 
   // ================================================================= UI
