@@ -145,6 +145,22 @@ Panel {
   readonly property string dayTitle: (currentReadings && currentReadings.title) ||
     (dayMeta ? dayMeta.title : Model.longDate(viewingKey))
 
+  // Header title. Ferias read "[Weekday] of the Nth week of ..."; the weekday
+  // already appears in the date row below ("Thursday 10 September"), so drop
+  // the redundant prefix. Sundays and other titles are left untouched.
+  readonly property string headerTitle: {
+    var m = dayTitle.match(/^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\s+of\s+the\s+(.+)$/i)
+    return m ? m[2] : dayTitle
+  }
+
+  // Saint shown on the date row only when the title does not already name it.
+  readonly property string headerSaint: {
+    var s = dayMeta && dayMeta.saint ? dayMeta.saint.trim() : ""
+    if (s === "") return ""
+    if (dayTitle.toLocaleLowerCase().indexOf(s.toLocaleLowerCase()) === -1) return s
+    return ""
+  }
+
   // Playback (mpv driven over its JSON IPC socket via socat).
   property bool playing: false
   property bool paused: false
@@ -1127,7 +1143,7 @@ Panel {
           // ---- Liturgical day title, date, saint, and colour chip.
           Item {
             width: parent.width
-            height: Style.space(40)
+            height: Style.space(54)
 
             Column {
               anchors.left: parent.left
@@ -1139,19 +1155,21 @@ Panel {
 
               Text {
                 width: parent.width
-                text: root.dayTitle.toUpperCase()
+                text: root.headerTitle.toUpperCase()
                 color: Qt.darker(root.bar.foreground, 1.4)
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.body
                 font.letterSpacing: 1
+                wrapMode: Text.Wrap
+                maximumLineCount: 2
                 elide: Text.ElideRight
               }
 
               Text {
                 width: parent.width
-                text: dayMeta && dayMeta.saint !== ""
-                  ? Model.longDate(viewingKey) + "  \u00B7  " + dayMeta.saint
-                  : Model.longDate(viewingKey)
+                text: root.headerSaint === ""
+                  ? Model.longDate(viewingKey)
+                  : Model.longDate(viewingKey) + "  \u00B7  " + root.headerSaint
                 color: Qt.darker(root.bar.foreground, 1.5)
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.caption
