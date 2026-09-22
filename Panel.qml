@@ -8,8 +8,8 @@ import "LectionaryCalendar.js" as Cal
 
 Panel {
   id: root
-  moduleName: "peter.bible"
-  ipcTarget: "peter.bible"
+  moduleName: "petealeon.dailybiblereadings"
+  ipcTarget: "petealeon.dailybiblereadings"
   manageIpc: false
 
   property var anchorItem: null
@@ -221,9 +221,9 @@ Panel {
   // Cache round-trips through tiny bash helpers; payloads travel as argv so
   // unicode scripture text never touches shell quoting.
   function cacheWrite(fileName, json) {
-    var target = Quickshell.env("HOME") + "/.local/state/omarchy/bible/cache/" + fileName
+    var target = Quickshell.env("HOME") + "/.local/state/omarchy/petealeon.dailybiblereadings/cache/" + fileName
     cacheWriteProc.command = ["bash", "-c",
-      "mkdir -p \"$(dirname \"$2\")\" && printf %s \"$1\" > \"$2\"", "bible-cache", json, target]
+      "mkdir -p \"$(dirname \"$2\")\" && printf %s \"$1\" > \"$2\"", "dailybiblereadings-cache", json, target]
     cacheWriteProc.running = true
   }
 
@@ -231,7 +231,7 @@ Panel {
     if (!fileName) return
     cacheReadProc.purpose = purpose
     cacheReadProc.command = ["bash", "-c",
-      "cat \"$HOME/.local/state/omarchy/bible/cache/" + fileName + "\" 2>/dev/null"]
+      "cat \"$HOME/.local/state/omarchy/petealeon.dailybiblereadings/cache/" + fileName + "\" 2>/dev/null"]
     cacheReadProc.running = true
   }
 
@@ -393,12 +393,12 @@ Panel {
   }
 
   // Talk to mpv over its JSON IPC socket; socat pipes one request per call.
-  readonly property string mpvSocket: (Quickshell.env("XDG_RUNTIME_DIR") || "/tmp") + "/peter-bible-mpv.sock"
+  readonly property string mpvSocket: (Quickshell.env("XDG_RUNTIME_DIR") || "/tmp") + "/dailybiblereadings-mpv.sock"
 
   function mpvCommand(json) {
     mpvCmdProc.command = ["bash", "-c",
       "printf '%s\\n' \"$1\" | timeout 3 socat - UNIX-CONNECT:\"$2\" >/dev/null 2>&1",
-      "bible-mpv-cmd", JSON.stringify(json), mpvSocket]
+      "dailybiblereadings-mpv-cmd", JSON.stringify(json), mpvSocket]
     mpvCmdProc.running = true
   }
 
@@ -455,7 +455,7 @@ Panel {
       + "if curl -fsSL --max-time 300 -o \"$file\" \"$1\"; then "
       + "omarchy-notification-send \"Podcast saved: $file\"; "
       + "else omarchy-notification-send \"Podcast download failed\"; fi",
-      "bible-dl", pod.url, viewingKey]
+      "dailybiblereadings-dl", pod.url, viewingKey]
     downloadProc.running = true
   }
 
@@ -482,10 +482,10 @@ Panel {
     }
     playing = true
     mpvProc.command = ["bash", "-c",
-      "rm -f \"$1\"; exec mpv --no-video --no-terminal --really-quiet --keep-open=no --input-ipc-server=\"$1\" --title=peter-bible-widget \"$2\"",
-      "bible-mpv", mpvSocket, pendingUrl]
+      "rm -f \"$1\"; exec mpv --no-video --no-terminal --really-quiet --keep-open=no --input-ipc-server=\"$1\" --title=DailyBibleReadings \"$2\"",
+      "dailybiblereadings-mpv", mpvSocket, pendingUrl]
     mpvProc.running = true
-    console.log("[bible] mpv spawn issued")
+    console.log("[dailybiblereadings] mpv spawn issued")
   }
 
   Process {
@@ -517,7 +517,7 @@ Panel {
     // mpv property names are dash-form: playback_time is simply not found.
     mpvQueryProc.command = ["bash", "-c",
       "printf '%s\\n%s\\n' '{\"command\":[\"get_property\",\"playback-time\"],\"request_id\":1}' '{\"command\":[\"get_property\",\"duration\"],\"request_id\":2}' | timeout 3 socat - UNIX-CONNECT:\"$1\" 2>/dev/null",
-      "bible-mpv-q", mpvSocket]
+      "dailybiblereadings-mpv-q", mpvSocket]
     mpvQueryProc.running = true
   }
 
@@ -556,7 +556,7 @@ Panel {
   // ------------------------------------------------------------ activity
 
   property FileView activityFile: FileView {
-    path: Quickshell.env("HOME") + "/.local/state/omarchy/bible/activity.json"
+    path: Quickshell.env("HOME") + "/.local/state/omarchy/petealeon.dailybiblereadings/activity.json"
     watchChanges: true
     printErrors: false
     onLoaded: {
@@ -600,9 +600,9 @@ Panel {
   }
 
   function persistActivity(state) {
-    var target = Quickshell.env("HOME") + "/.local/state/omarchy/bible/activity.json"
-    activitySaveProc.command = ["bash", "-c",
-      "mkdir -p \"$(dirname \"$2\")\" && printf %s \"$1\" > \"$2\"", "bible-activity", JSON.stringify(state), target]
+var target = Quickshell.env("HOME") + "/.local/state/omarchy/petealeon.dailybiblereadings/activity.json"
+    activityWriteProc.command = ["bash", "-c",
+      "mkdir -p \"$(dirname \"$2\")\" && printf %s \"$1\" > \"$2\"", "dailybiblereadings-activity", JSON.stringify(state), target]
     activitySaveProc.running = true
   }
 

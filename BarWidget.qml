@@ -6,7 +6,7 @@ import qs.Ui
 
 BarWidget {
   id: root
-  moduleName: "peter.bible"
+  moduleName: "petealeon.dailybiblereadings"
 
   function injectPanel() {
     var target = panelLoader.item

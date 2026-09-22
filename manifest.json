@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "id": "peter.bible",
-  "name": "Bible",
+  "id": "petealeon.dailybiblereadings",
+  "name": "Daily Bible Readings",
   "version": "2.0.0",
   "author": "petealeon",
   "description": "Daily Mass readings with matching podcast playback, liturgical calendar, and rosary mysteries",
@@ -12,7 +12,7 @@
     "barWidget": "BarWidget.qml"
   },
   "barWidget": {
-    "displayName": "Bible",
+    "displayName": "Daily Bible Readings",
     "description": "Daily readings, liturgical calendar, podcast player",
     "category": "Info",
     "defaultSection": "center",

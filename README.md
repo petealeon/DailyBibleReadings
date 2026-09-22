@@ -17,7 +17,7 @@ An [Omarchy](https://omarchy.org) menu-bar widget (built with Quickshell/QML) fo
 On an Omarchy system:
 
 ```bash
-omarchy plugin add https://github.com/petealeon/BibleWidget.git --enable
+omarchy plugin add https://github.com/petealeon/DailyBibleReadings.git --enable
 ```
 
 Or clone this repository and run the manual installer:
@@ -26,7 +26,7 @@ Or clone this repository and run the manual installer:
 ./install.sh
 ```
 
-Remove it any time with `omarchy plugin remove peter.bible` (or `./install.sh --remove`).
+Remove it any time with `omarchy plugin remove petealeon.dailybiblereadings` (or `./install.sh --remove`).
 
 Dependencies: `mpv`, `socat`, `curl`, and `wl-copy` (usually already present; `install.sh` checks and prints the install command for anything missing).
 
@@ -52,14 +52,14 @@ Full reading text is available for the USCCB feed's ~10-day window; podcast play
 Widget settings live in the bar layout entry in `~/.config/omarchy/shell.json`:
 
 ```json
-{ "id": "peter.bible", "reminderEnabled": true, "reminderHour": 8,
+{ "id": "petealeon.dailybiblereadings", "reminderEnabled": true, "reminderHour": 8,
   "refreshMinutes": 30, "tintLevel": 1.0 }
 ```
 
 - `fetchToolPath` — path to a helper that fetches one day's readings text from the USCCB site for days outside the RSS feed window; defaults to `""` (disabled).
 - `tintLevel` — 0–1 (default 1): how far liturgical accent colours are adjusted to stay legible on light themes.
 
-State (per-day activity, feed caches) lives under `~/.local/state/omarchy/bible/`.
+State (per-day activity, feed caches) lives under `~/.local/state/omarchy/petealeon.dailybiblereadings/`.
 
 ## Development
 

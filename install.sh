@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install (or remove) the peter.bible Omarchy shell plugin.
+# Install (or remove) the petealeon.dailybiblereadings Omarchy shell plugin.
 #
 # Usage:
 #   ./install.sh            install + enable the widget
@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-PLUGIN_ID="peter.bible"
+PLUGIN_ID="petealeon.dailybiblereadings"
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEST="${HOME}/.config/omarchy/plugins/${PLUGIN_ID}"
 SHELL_JSON="${HOME}/.config/omarchy/shell.json"

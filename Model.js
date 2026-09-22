@@ -1,4 +1,4 @@
-// Data helpers for peter.bible: date math, USCCB Daily Readings RSS parsing
+// Data helpers for petealeon.dailybiblereadings: date math, USCCB Daily Readings RSS parsing
 // (full NAB-RE text), USCCB/SoundCloud podcast RSS matching, rosary mysteries,
 // and per-day activity state.
 
