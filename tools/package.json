@@ -1,14 +1,20 @@
 {
-  "name": "tools",
+  "name": "daily-bible-readings-tools",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Calendar generator for the Daily Bible Readings Omarchy widget",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "generate": "node generate-calendar.cjs",
+    "start": "node generate-calendar.cjs"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": [
+    "omarchy",
+    "quickshell",
+    "liturgical",
+    "calendar",
+    "romcal"
+  ],
+  "author": "petealeon",
+  "license": "MIT",
   "type": "commonjs",
   "dependencies": {
     "romcal": "^1.3.0"

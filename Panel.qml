@@ -600,8 +600,8 @@ Panel {
   }
 
   function persistActivity(state) {
-var target = Quickshell.env("HOME") + "/.local/state/omarchy/petealeon.dailybiblereadings/activity.json"
-    activityWriteProc.command = ["bash", "-c",
+    var target = Quickshell.env("HOME") + "/.local/state/omarchy/petealeon.dailybiblereadings/activity.json"
+    activitySaveProc.command = ["bash", "-c",
       "mkdir -p \"$(dirname \"$2\")\" && printf %s \"$1\" > \"$2\"", "dailybiblereadings-activity", JSON.stringify(state), target]
     activitySaveProc.running = true
   }

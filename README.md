@@ -1,4 +1,4 @@
-# Bible Widget for Omarchy
+# Daily Bible Readings for Omarchy
 
 An [Omarchy](https://omarchy.org) menu-bar widget (built with Quickshell/QML) for the Catholic daily Mass: a liturgical month calendar, the full day's readings, and the official USCCB Daily Mass Reading podcast — with text and audio in the same translation (NAB-RE).
 
