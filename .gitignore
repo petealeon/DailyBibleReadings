@@ -1,6 +1,4 @@
 tools/node_modules/
-tools/package-lock.json
-tools/package.json
 
 # Agent guidance kept locally, not shipped with the plugin
 AGENTS.md
