@@ -3,7 +3,7 @@
   "id": "peter.bible",
   "name": "Bible",
   "version": "2.0.0",
-  "author": "peter",
+  "author": "petealeon",
   "description": "Daily Mass readings with matching podcast playback, liturgical calendar, and rosary mysteries",
   "kinds": [
     "bar-widget"

@@ -41,7 +41,7 @@ different translation.
 On an Omarchy system, from any machine that can reach the repo:
 
 ```bash
-omarchy plugin add <your-git-url>/BibleWidget.git --enable
+omarchy plugin add https://github.com/petealeon/BibleWidget.git --enable
 ```
 
 Or clone/copy this folder somewhere on the machine and run the manual
@@ -163,5 +163,5 @@ supporting the [Catholic Communication Campaign](https://www.usccb.org/committee
 
 ## License
 
-[MIT](LICENSE) © Peter. The widget's *code* is freely reusable; the scripture
+[MIT](LICENSE) © petealeon. The widget's *code* is freely reusable; the scripture
 text and podcast audio it fetches remain under their publishers' copyright.
