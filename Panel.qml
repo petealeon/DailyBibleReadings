@@ -185,7 +185,19 @@ Panel {
     return String(parts.join(" \u2014 ")).replace(/[$`"\\]/g, "'")
   }
 
-  readonly property color liturgicalColor: dayMeta ? Model.liturgicalColourHex(dayMeta.colour) : "transparent"
+  // Contrast target: the keyboard-popup card paints Color.popups.background.
+  readonly property color surfaceBackground: Color.popups.background
+
+  // 0..1: 1 guarantees liturgical text clears WCAG AA on this surface; lower
+  // values interpolate back toward the raw tint (richer colour, weaker
+  // guarantee). Dark themes pass untouched either way.
+  readonly property real tintLevel: parseFloat(setting("tintLevel", 1.0) || 1.0)
+
+  // Theme-safe variant of the header chip's accent — the pill fill stays a
+  // translucent wash of the raw tint; the label uses this so it stays legible
+  // on light surfaces.
+  readonly property color liturgicalTextColor: dayMeta
+    ? Model.liturgicalTintFor(surfaceBackground, Model.liturgicalColourHex(dayMeta.colour), tintLevel) : "transparent"
 
   // Fixed-height podcast transport bar pinned below the scrolling content.
   readonly property real playerBarHeight: Style.space(38) + Style.spacing.hairline
@@ -1066,7 +1078,9 @@ Panel {
                   readonly property bool isDone: dateKey !== "" && root.isDone(dateKey)
                   readonly property int contentKind: dateKey !== "" ? root.dayContentKind(dateKey) : 0
                   readonly property bool hasContent: dayCell.contentKind > 0
-                  readonly property color dayTint: meta ? Model.liturgicalColourHex(meta.colour) : root.bar.foreground
+                  readonly property color dayTint: meta
+                    ? Model.liturgicalTintFor(root.surfaceBackground, Model.liturgicalColourHex(meta.colour), root.tintLevel)
+                    : root.bar.foreground
 
                   visible: dayNumber >= 1
 
@@ -1085,7 +1099,7 @@ Panel {
                     height: 2
                     radius: 1
                     visible: dayCell.isDone
-                    color: Qt.alpha("#6f996f", 0.9)
+                    color: Qt.alpha(Model.liturgicalTintFor(root.surfaceBackground, "#6f996f", root.tintLevel), 0.9)
                   }
 
                   Text {
@@ -1189,14 +1203,14 @@ Panel {
                 width: seasonLabel.implicitWidth + Style.space(14)
                 height: Style.space(18)
                 radius: height / 2
-                color: visible ? Util.alpha(liturgicalColor, 0.18) : "transparent"
+                color: visible ? Util.alpha(root.liturgicalTextColor, 0.18) : "transparent"
                 anchors.verticalCenter: parent.verticalCenter
 
                 Text {
                   id: seasonLabel
                   anchors.centerIn: parent
                   text: (dayMeta ? dayMeta.colour : "").toUpperCase()
-                  color: liturgicalColor
+                  color: root.liturgicalTextColor
                   font.family: root.bar.fontFamily
                   font.pixelSize: Style.font.caption
                   font.letterSpacing: 1

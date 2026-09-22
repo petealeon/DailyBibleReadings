@@ -105,7 +105,7 @@ Widget settings live in the bar layout entry in `~/.config/omarchy/shell.json`:
 
 ```json
 { "id": "peter.bible", "reminderEnabled": true, "reminderHour": 8,
-  "refreshMinutes": 30 }
+  "refreshMinutes": 30, "tintLevel": 1.0 }
 ```
 
 Optional `fetchToolPath` points to a helper that can fetch one day's readings
@@ -113,6 +113,13 @@ text from the USCCB site when the day falls outside the RSS feed window. It
 defaults to `""` (disabled): set it to the path of a helper that prints the
 widget's JSON schema with `--json`, and the panel backfills out-of-window days
 locally instead of opening the public site.
+
+Optional `tintLevel` (0–1, default 1) controls how far liturgical accent
+colours are adjusted to stay legible on light themes. At 1, calendar day
+numbers and the season chip are darkened/brightened just enough to clear a
+4.5:1 text contrast on the popup surface while preserving the liturgical
+hue; lower values trade contrast for a more saturated tint. On dark themes
+the colours render unchanged regardless of this setting.
 
 State (per-day activity, feed caches) lives under
 `~/.local/state/omarchy/bible/`.

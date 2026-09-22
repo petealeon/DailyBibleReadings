@@ -265,6 +265,137 @@ function liturgicalColourHex(name) {
   return ""
 }
 
+// ----------------------------------------------------------- contrast
+
+// sRGB → linear for WCAG relative luminance. `c` is a 0..255 channel value.
+function _linearChannel(c) {
+  c /= 255
+  return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)
+}
+
+// Parse any string QML hands a colour property: "#rgb", "#rrggbb", "#aarrggbb"
+// (Qt prepends the alpha octet), and "rgb()"/"rgba()". Alpha is ignored —
+// contrast math compares composite swatches, not transparency.
+function _parseColour(col) {
+  var s = String(col || "").replace(/^\s+|\s+$/g, "")
+  var m
+  if ((m = s.match(/^#([0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/))) {
+    var hex = m[1]
+    if (hex.length === 3) hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2]
+    else if (hex.length === 4) hex = hex[1] + hex[1] + hex[2] + hex[2] + hex[3] + hex[3]
+    else if (hex.length === 8) hex = hex.substr(2) // drop leading alpha octet
+    var rgb = []
+    for (var i = 0; i < 3; i++) rgb.push(parseInt(hex.substr(i * 2, 2), 16))
+    return isNaN(rgb[0]) || isNaN(rgb[1]) || isNaN(rgb[2]) ? null : rgb
+  }
+  if ((m = s.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,[^)]*)?\)$/i))) {
+    return [parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3], 10)]
+  }
+  return null
+}
+
+function _luminance(rgb) {
+  return 0.2126 * _linearChannel(rgb[0]) + 0.7152 * _linearChannel(rgb[1]) + 0.0722 * _linearChannel(rgb[2])
+}
+
+// WCAG 2.2 contrast ratio between two parsed RGB triples.
+function _contrast(a, b) {
+  var la = _luminance(a), lb = _luminance(b)
+  var hi = Math.max(la, lb), lo = Math.min(la, lb)
+  return (hi + 0.05) / (lo + 0.05)
+}
+
+function _toHex(rgb) {
+  function h(n) {
+    n = Math.max(0, Math.min(255, Math.round(n)))
+    return (n < 16 ? "0" : "") + n.toString(16)
+  }
+  return "#" + h(rgb[0]) + h(rgb[1]) + h(rgb[2])
+}
+
+function _toHsl(rgb) {
+  var r = rgb[0] / 255, g = rgb[1] / 255, b = rgb[2] / 255
+  var max = Math.max(r, g, b), min = Math.min(r, g, b)
+  var l = (max + min) / 2
+  var h = 0, s = 0
+  if (max !== min) {
+    var d = max - min
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min)
+    if (max === r) h = (g - b) / d + (g < b ? 6 : 0)
+    else if (max === g) h = (b - r) / d + 2
+    else h = (r - g) / d + 4
+    h /= 6
+  }
+  return [h, s, l]
+}
+
+function _fromHsl(hsl) {
+  var h = hsl[0], s = hsl[1], l = hsl[2]
+  var r, g, b
+  if (s === 0) { r = g = b = l }
+  else {
+    function hue2rgb(p, q, t) {
+      if (t < 0) t += 1
+      if (t > 1) t -= 1
+      if (t < 1 / 6) return p + (q - p) * 6 * t
+      if (t < 1 / 2) return q
+      if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6
+      return p
+    }
+    var q = l < 0.5 ? l * (1 + s) : l + s - l * s
+    var p = 2 * l - q
+    r = hue2rgb(p, q, h + 1 / 3)
+    g = hue2rgb(p, q, h)
+    b = hue2rgb(p, q, h - 1 / 3)
+  }
+  return [r * 255, g * 255, b * 255]
+}
+
+// Shift a liturgical accent toward black (light surface) or white (dark
+// surface) — preserving its hue and saturation — just far enough to hit the
+// WCAG AA text threshold on `surface`. Passes any colour that already clears
+// it through unchanged, so dark themes keep the full-strength liturgical tint.
+// `tintLevel` (0..1) interpolates between the original colour and the fully
+// corrected one; 1.0 guarantees the threshold, lower values trade legibility
+// for a more saturated tint.
+function liturgicalTintFor(surface, tint, tintLevel) {
+  var bg = _parseColour(surface)
+  var fg = _parseColour(tint)
+  if (!bg || !fg) return String(tint || "")
+  var level = isNaN(parseFloat(tintLevel)) ? 1.0 : Math.max(0, Math.min(1, parseFloat(tintLevel)))
+  // Search with a small margin so rounding can't land the result a tick under
+  // the 4.5 WCAG AA floor.
+  var target = 4.6
+  if (_contrast(fg, bg) >= target) return String(tint || "")
+
+  var hsl = _toHsl(fg)
+  // On a light surface contrast only improves as lightness drops, so the
+  // pass region is [0, L]. On a dark surface it improves as lightness rises,
+  // so the pass region is [L, 1]. Find the boundary — the correction
+  // closest to the original colour that still clears the threshold.
+  var darkSide = _luminance(bg) > 0.5
+  var lo = 0.0, hi = 1.0
+  var best = darkSide ? 0.0 : 1.0
+  for (var iter = 0; iter < 32; iter++) {
+    var l = (lo + hi) / 2
+    var cand = _fromHsl([hsl[0], hsl[1], l])
+    if (_contrast(cand, bg) >= target) {
+      best = l
+      if (darkSide) lo = l   // passing → may move closer to original (higher l)
+      else hi = l            // passing → may move closer to original (lower l)
+    } else {
+      if (darkSide) hi = l
+      else lo = l
+    }
+  }
+  var lSafe = best
+  // Reduce the shift according to `level`: blend between HSL(original) and
+  // HSL(corrected) on the lightness axis so hue/saturation stay intact.
+  var lFinal = hsl[2] + (lSafe - hsl[2]) * level
+  var corrected = _fromHsl([hsl[0], hsl[1], lFinal])
+  return _toHex(corrected)
+}
+
 // ---------------------------------------------------------------- podcast
 
 // Official USCCB Daily Readings podcast (SoundCloud-hosted RSS).
