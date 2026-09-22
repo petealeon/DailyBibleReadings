@@ -1358,7 +1358,7 @@ Panel {
                   font.family: root.bar.fontFamily
                   font.pixelSize: Style.font.bodySmall
                   font.italic: true
-                  elide: sectionHeader.fits ? Text.ElideLeft : Text.ElideRight
+                  elide: Text.ElideRight
                 }
               }
 
@@ -1768,10 +1768,16 @@ Panel {
   readonly property real verseIndent: Style.space(12)
 
   // Plain-text wrapper around TextMetrics.advanceWidth. The font scratch
-  // state lives entirely in JS so no QML binding depends on it.
-  function measureWidth(text, pixelSize, italic) {
+  // state lives entirely in JS so no QML binding depends on it. The family is
+  // matched to the bar font so the measured width matches the rendered Text
+  // (mismatch starves layout boxes and triggers elision).
+  function measureWidth(text, pixelSize, italic, letterSpacing) {
+    var family = root.bar && root.bar.fontFamily ? root.bar.fontFamily : ""
+    if (readingMetrics.font.family !== family)
+      readingMetrics.font.family = family
     readingMetrics.font.pixelSize = pixelSize
     readingMetrics.font.italic = italic === true
+    readingMetrics.font.letterSpacing = letterSpacing === true ? 1 : 0
     readingMetrics.text = String(text || "")
     return readingMetrics.advanceWidth
   }
@@ -1812,7 +1818,7 @@ Panel {
     var budget = firstBudget
     for (var i = 0; i < words.length; i++) {
       var probe = cur ? cur + " " + words[i] : words[i]
-      if (cur && root.measureWidth(probe, Style.font.body, italic) > budget) {
+      if (cur && root.measureWidth(probe, Style.font.body, italic, false) > budget) {
         out.push(cur)
         budget = firstBudget - root.verseIndent
         cur = words[i]
@@ -1868,8 +1874,8 @@ Panel {
         var sec = tab.sections[s]
         var label = String(sec.label || "").toUpperCase()
         var cite = sec.citation || ""
-        var labelW = root.measureWidth(label, Style.font.bodySmall, false)
-        var citeW = cite ? root.measureWidth(cite, Style.font.bodySmall, true) : 0
+        var labelW = root.measureWidth(label, Style.font.bodySmall, false, true)
+        var citeW = cite ? root.measureWidth(cite, Style.font.bodySmall, true, false) : 0
         var fits = labelW + (cite ? Style.space(16) + citeW : 0) <= avail
         var lines = []
         var verse = /responsorial|psalm|alleluia|acclamation/i.test(String(sec.label || ""))
