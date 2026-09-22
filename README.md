@@ -60,6 +60,10 @@ Remove it again any time with `omarchy plugin remove peter.bible` (or
 `install.sh` checks and tells you the `omarchy pkg add` line for anything
 missing).
 
+**Optional:** the per-day fetch helper that backfills readings for days
+outside the feed window (see [Settings](#settings) — `fetchToolPath`). The
+panel works without it, using the public site instead.
+
 ## Usage
 
 | Action | Result |
@@ -77,6 +81,13 @@ Days are clickable as far as data actually reaches: full readings text for
 the USCCB feed's ~10-day window, podcast playback across the podcast feed's
 much larger range (roughly June 2025 onward, plus scheduled future episodes).
 Everything you open is cached locally for offline use.
+
+For calendar days *outside* the feed window (history and the future podcast
+reaches), the panel offers a **FETCH TEXT** button in place of the reading
+text. When the optional per-day fetch helper is installed it pulls that day's
+official USCCB page and caches it like any other day; without it, the button
+falls back to opening the public page. See [Settings](#settings) for
+`fetchToolPath`.
 
 ### IPC
 
@@ -96,6 +107,12 @@ Widget settings live in the bar layout entry in `~/.config/omarchy/shell.json`:
 { "id": "peter.bible", "reminderEnabled": true, "reminderHour": 8,
   "refreshMinutes": 30 }
 ```
+
+Optional `fetchToolPath` points to a helper that can fetch one day's readings
+text from the USCCB site when the day falls outside the RSS feed window. It
+defaults to `""` (disabled): set it to the path of a helper that prints the
+widget's JSON schema with `--json`, and the panel backfills out-of-window days
+locally instead of opening the public site.
 
 State (per-day activity, feed caches) lives under
 `~/.local/state/omarchy/bible/`.
@@ -119,7 +136,10 @@ cd tools && npm install && node generate-calendar.cjs
   © 1968, 1981, 1997, International Committee on English in the Liturgy, Inc.
   All rights reserved. Fetched at runtime per user from the official USCCB
   RSS feed, whose display for free, non-gated services is permitted by the
-  [USCCB RSS policy](https://www.usccb.org/subscribe/rss).
+  [USCCB RSS policy](https://www.usccb.org/subscribe/rss). Days the feed does
+  not reach are fetched at runtime from their official per-day page — a few
+  hundred words of scripture each, licensed by the NAB permissions guidelines
+  for use in web formats — and never embedded in the widget.
 - **Readings audio** — [USCCB Daily Mass Reading
   Podcast](https://bible.usccb.org/podcasts/audio), © United States
   Conference of Catholic Bishops; unaltered episodes streamed from the

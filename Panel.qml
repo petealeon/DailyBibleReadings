@@ -63,6 +63,11 @@ Panel {
   readonly property int refreshMinutes: Math.max(5, parseInt(setting("refreshMinutes", 30), 10) || 30)
   readonly property bool reminderEnabled: setting("reminderEnabled", true) !== false
   readonly property int reminderHour: Math.min(23, Math.max(0, parseInt(setting("reminderHour", 8), 10)))
+  // Optional helper that fetches a single day's readings text from
+  // bible.usccb.org (days outside the ~10-day RSS feed window). Disabled by
+  // default; set fetchToolPath to a helper that prints the widget's JSON
+  // schema with `--json` to backfill out-of-window days locally.
+  readonly property string fetchToolPath: String(setting("fetchToolPath", ""))
 
   // --------------------------------------------------------------- state
 
@@ -85,6 +90,11 @@ Panel {
   property string viewingKey: Model.todayKey()
   property int selectedSection: 0
 
+  // Days whose text was already requested from the fetch tool (one attempt per
+  // key unless forced), plus which keys are in flight right now.
+  property var readingsFetchAttempted: ({})
+  property var readingsFetching: ({})  // dateKey -> true while a fetch runs
+
   // Sections grouped into display tabs (acclamation folded into the Gospel).
   readonly property var readingTabs: currentReadings ? Model.buildReadingTabs(currentReadings.sections) : []
   readonly property int activeTab: Math.max(0, Math.min(selectedSection, readingTabs.length - 1))
@@ -103,6 +113,17 @@ Panel {
   readonly property string readingsPhase: {
     void root.dataRevision
     return root.readingsStatus[root.viewingKey] || ""
+  }
+
+  // The fetch tool can backfill text for any day in the calendar range, so a
+  // missing day is only terminal when the tool itself is unavailable.
+  readonly property bool readingsFetchable: {
+    void root.dataRevision
+    return fetchToolPath !== ""
+  }
+  readonly property bool readingsInFlight: {
+    void root.dataRevision
+    return root.readingsFetching[root.viewingKey] === true
   }
 
   // Whole-feed podcast map: one fetch covers every day the feed reaches.
@@ -164,6 +185,9 @@ Panel {
   function refreshAll() {
     ensureReadings(true)
     ensurePodcast(true)
+    // Let failed per-day backfills retry on the next manual refresh.
+    readingsFetchAttempted = {}
+    readingsFetching = {}
   }
 
   // Cache round-trips through tiny bash helpers; payloads travel as argv so
@@ -254,6 +278,54 @@ Panel {
       }
     }
     onExited: root.dataRevision++
+  }
+
+  // Backfill one day's readings text via the fetch tool when the RSS feed
+  // window cannot reach it (podcast episodes run well past today). The tool
+  // prints the same widget schema the feed parser produces.
+  function ensureReadingsForKey(key, force) {
+    if (!key) return
+    if (readingsByDate[key] || readingsStatus[key] === "ok") return
+    if (!force && readingsFetchAttempted[key]) return
+    if (readingsFetching[key] || key === readingsFetchKey) return
+    fetchReadingsKey = key
+    readingsFetchAttempted[key] = true
+    readingsFetching[key] = true
+    fetchReadingsProc.command = [fetchToolPath, "--json", key]
+    fetchReadingsProc.running = true
+    root.dataRevision++
+  }
+
+  property string fetchReadingsKey: ""
+  property string fetchReadingsLog: ""
+
+  Process {
+    id: fetchReadingsProc
+    onExited: {
+      root.readingsFetching[root.fetchReadingsKey] = false
+      root.fetchReadingsKey = ""
+      root.dataRevision++
+    }
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var key = root.fetchReadingsKey
+        if (!key) return
+        var raw = String(text || "").trim()
+        var data = null
+        try { data = JSON.parse(raw) } catch (e) { data = null }
+        if (data && data.readings && data.readings.ok) {
+          root.readingsByDate[key] = data.readings
+          root.readingsStatus[key] = "ok"
+          root.cacheWrite("readings-" + key + ".json", JSON.stringify({ readings: data.readings }))
+        } else {
+          root.readingsStatus[key] = "error"
+          root.fetchReadingsLog = (key + ": " + raw.slice(0, 120)) || ""
+          root.cacheRead("readings:" + key, "readings-" + key + ".json")
+        }
+        root.dataRevision++
+      }
+    }
   }
 
   // --------------------------------------------------------------- podcast
@@ -569,6 +641,8 @@ Panel {
     viewingKey = key
     ensurePodcast(false)
     followPlayback()
+    // Text for days outside the ~10-day feed window comes from the fetch tool.
+    if (!readingsByDate[key]) ensureReadingsForKey(key, false)
   }
 
   // Playback follows the selected day: a live episode hot-swaps to the new
@@ -1293,8 +1367,9 @@ Panel {
             }
           }
 
-          // ---- Loading / unavailable states for readings text. Days outside the
-          // ~10-day feed window offer the public page instead.
+          // ---- Loading / unavailable states for readings text. Days inside
+          // the ~10-day feed window load via RSS; other days can be backfilled
+          // by the fetch tool. Without the tool, the public page is offered.
           Column {
             x: Style.space(16)
             width: parent.width - Style.space(32)
@@ -1302,7 +1377,7 @@ Panel {
             spacing: Style.space(8)
 
             Text {
-              visible: readingsProc.running
+              visible: readingsProc.running || root.readingsInFlight
               text: "Fetching readings\u2026"
               color: Qt.darker(root.bar.foreground, 1.5)
               font.family: root.bar.fontFamily
@@ -1311,8 +1386,8 @@ Panel {
             }
 
             Text {
-              visible: !readingsProc.running
-              text: "Reading text is available for the last two weeks at bible.usccb.org"
+              visible: !readingsProc.running && !root.readingsInFlight && !root.readingsFetchable
+              text: "Reading text for this day is on the public site at bible.usccb.org"
               color: Qt.darker(root.bar.foreground, 1.5)
               font.family: root.bar.fontFamily
               font.pixelSize: Style.font.bodySmall
@@ -1322,7 +1397,7 @@ Panel {
             }
 
             Rectangle {
-              visible: !readingsProc.running
+              visible: !readingsProc.running && !root.readingsInFlight && !root.readingsFetchable
               width: readOnlineLabel.implicitWidth + Style.space(16)
               height: Style.space(20)
               radius: Style.cornerRadius
@@ -1346,6 +1421,34 @@ Panel {
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
                 onClicked: root.openDayReadings(root.viewingKey)
+              }
+            }
+
+            Rectangle {
+              visible: !readingsProc.running && !root.readingsInFlight && root.readingsFetchable
+              width: fetchLabel.implicitWidth + Style.space(16)
+              height: Style.space(20)
+              radius: Style.cornerRadius
+              color: fetchArea.containsMouse ? Style.hoverFillFor(root.bar.foreground, Color.accent) : "transparent"
+              border.width: 1
+              border.color: Qt.alpha(root.bar.foreground, 0.35)
+
+              Text {
+                id: fetchLabel
+                anchors.centerIn: parent
+                text: "FETCH TEXT"
+                color: root.bar.foreground
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.caption
+                font.letterSpacing: 1
+              }
+
+              MouseArea {
+                id: fetchArea
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.ensureReadingsForKey(root.viewingKey, true)
               }
             }
           }
@@ -1470,7 +1573,7 @@ Panel {
 
               Text {
                 width: parent.width
-                text: "For personal devotion. Not affiliated with or endorsed by the USCCB; text shown per the USCCB RSS policy and \u00A9 its publishers."
+                text: "For personal devotion. Not affiliated with or endorsed by the USCCB. Text and audio \u00A9 their publishers: RSS feed per the USCCB RSS policy; days outside the feed window fetched per the NAB permissions guidelines (under 5,000 words, web formats)."
                 color: Qt.darker(root.bar.foreground, 1.5)
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.caption
