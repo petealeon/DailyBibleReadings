@@ -285,7 +285,12 @@ Panel {
 
   Process {
     id: readingsProc
-    command: ["curl", "-fsSL", "--max-time", "12", Model.usccbRss()]
+    // Cap the feed at 2 MiB (real size ~57 KB): reject anything larger rather
+    // than buffering an unbounded response for parsing.
+    command: ["bash", "-c",
+      "set -o pipefail; cap=2097152; d=$(curl -fsSL --max-time 12 \"$1\" | head -c $((cap+1))); "
+      + "rc=$?; [ $rc -eq 0 ] && [ ${#d} -le $cap ] || exit 63; printf '%s' \"$d\"",
+      "dailybiblereadings-rss", Model.usccbRss()]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
@@ -319,7 +324,10 @@ Panel {
     fetchReadingsKey = key
     readingsFetchAttempted[key] = true
     readingsFetching[key] = true
-    fetchReadingsProc.command = [fetchToolPath, "--json", key]
+    fetchReadingsProc.command = ["bash", "-c",
+      "set -o pipefail; cap=2097152; d=$(\"$1\" --json \"$2\" | head -c $((cap+1))); "
+      + "rc=$?; [ $rc -eq 0 ] && [ ${#d} -le $cap ] || exit 63; printf '%s' \"$d\"",
+      "dailybiblereadings-fetch", fetchToolPath, key]
     fetchReadingsProc.running = true
     root.dataRevision++
   }
@@ -367,7 +375,12 @@ Panel {
   // The SoundCloud feed carries every episode; one fetch maps them all by date.
   Process {
     id: podcastProc
-    command: ["curl", "-fsS", "--max-time", "12", Model.podcastRss()]
+    // Cap the feed at 8 MiB (real size ~0.5 MB and grows with episodes): reject
+    // anything larger rather than buffering an unbounded response for parsing.
+    command: ["bash", "-c",
+      "set -o pipefail; cap=8388608; d=$(curl -fsS --max-time 12 \"$1\" | head -c $((cap+1))); "
+      + "rc=$?; [ $rc -eq 0 ] && [ ${#d} -le $cap ] || exit 63; printf '%s' \"$d\"",
+      "dailybiblereadings-podcast", Model.podcastRss()]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
@@ -450,11 +463,12 @@ Panel {
     if (!pod || !pod.url || downloading) return
     downloading = true
     downloadProc.command = ["bash", "-c",
-      "dir=\"$(xdg-user-dir DOWNLOAD 2>/dev/null || echo \"$HOME/Downloads\")\"; "
-      + "mkdir -p \"$dir\"; file=\"$dir/Daily-Mass-Reading-$2.mp3\"; "
-      + "if curl -fsSL --max-time 300 -o \"$file\" \"$1\"; then "
+      "set -o pipefail; dir=\"$(xdg-user-dir DOWNLOAD 2>/dev/null || echo \"$HOME/Downloads\")\"; "
+      + "mkdir -p \"$dir\"; file=\"$dir/Daily-Mass-Reading-$2.mp3\"; tmp=\"$file.part\"; "
+      + "if curl -fsSL --max-time 300 --max-filesize 104857600 \"$1\" | head -c 104857600 > \"$tmp\" "
+      + "&& [ -s \"$tmp\" ]; then mv \"$tmp\" \"$file\"; "
       + "omarchy-notification-send \"Podcast saved: $file\"; "
-      + "else omarchy-notification-send \"Podcast download failed\"; fi",
+      + "else rm -f \"$tmp\"; omarchy-notification-send \"Podcast download failed\"; fi",
       "dailybiblereadings-dl", pod.url, viewingKey]
     downloadProc.running = true
   }
