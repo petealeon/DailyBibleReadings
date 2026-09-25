@@ -464,11 +464,12 @@ Panel {
     downloading = true
     downloadProc.command = ["bash", "-c",
       "set -o pipefail; dir=\"$(xdg-user-dir DOWNLOAD 2>/dev/null || echo \"$HOME/Downloads\")\"; "
-      + "mkdir -p \"$dir\"; file=\"$dir/Daily-Mass-Reading-$2.mp3\"; tmp=\"$file.part\"; "
-      + "if curl -fsSL --max-time 300 --max-filesize 104857600 \"$1\" | head -c 104857600 > \"$tmp\" "
-      + "&& [ -s \"$tmp\" ]; then mv \"$tmp\" \"$file\"; "
+      + "mkdir -p \"$dir\"; file=\"$dir/Daily-Mass-Reading-$2.mp3\"; "
+      + "tmp=$(mktemp \"$dir/.Daily-Mass-Reading-$2.mp3.part.XXXXXX\") || tmp=\"\"; "
+      + "if [ -n \"$tmp\" ] && curl -fsSL --max-time 300 --max-filesize 104857600 \"$1\" | head -c 104857600 > \"$tmp\" "
+      + "&& [ -s \"$tmp\" ]; then mv -T \"$tmp\" \"$file\"; "
       + "omarchy-notification-send \"Podcast saved: $file\"; "
-      + "else rm -f \"$tmp\"; omarchy-notification-send \"Podcast download failed\"; fi",
+      + "else [ -n \"$tmp\" ] && rm -f \"$tmp\"; omarchy-notification-send \"Podcast download failed\"; fi",
       "dailybiblereadings-dl", pod.url, viewingKey]
     downloadProc.running = true
   }

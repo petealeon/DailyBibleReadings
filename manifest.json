@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "petealeon.dailybiblereadings",
   "name": "Daily Bible Readings",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "author": "petealeon",
   "description": "Daily Mass readings with matching podcast playback, liturgical calendar, and rosary mysteries",
   "kinds": [
