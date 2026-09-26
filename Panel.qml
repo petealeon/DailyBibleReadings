@@ -223,7 +223,9 @@ Panel {
   function cacheWrite(fileName, json) {
     var target = Quickshell.env("HOME") + "/.local/state/omarchy/petealeon.dailybiblereadings/cache/" + fileName
     cacheWriteProc.command = ["bash", "-c",
-      "mkdir -p \"$(dirname \"$2\")\" && printf %s \"$1\" > \"$2\"", "dailybiblereadings-cache", json, target]
+      "mkdir -p \"$(dirname \"$2\")\" || exit 1; t=$(mktemp \"$(dirname \"$2\")/.tmp.XXXXXXXX\") || exit 1; "
+      + "if printf %s \"$1\" > \"$t\"; then mv -T \"$t\" \"$2\"; else rm -f \"$t\"; fi",
+      "dailybiblereadings-cache", json, target]
     cacheWriteProc.running = true
   }
 
@@ -617,7 +619,9 @@ Panel {
   function persistActivity(state) {
     var target = Quickshell.env("HOME") + "/.local/state/omarchy/petealeon.dailybiblereadings/activity.json"
     activitySaveProc.command = ["bash", "-c",
-      "mkdir -p \"$(dirname \"$2\")\" && printf %s \"$1\" > \"$2\"", "dailybiblereadings-activity", JSON.stringify(state), target]
+      "mkdir -p \"$(dirname \"$2\")\" || exit 1; t=$(mktemp \"$(dirname \"$2\")/.tmp.XXXXXXXX\") || exit 1; "
+      + "if printf %s \"$1\" > \"$t\"; then mv -T \"$t\" \"$2\"; else rm -f \"$t\"; fi",
+      "dailybiblereadings-activity", JSON.stringify(state), target]
     activitySaveProc.running = true
   }
 
