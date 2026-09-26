@@ -102,6 +102,17 @@ function trimWords(s, max) {
   return (cut > max / 3 ? s.slice(0, cut) : s.slice(0, max)) + "\u2026"
 }
 
+// ------------------------------------------------------------------- urls
+
+// URLs that come out of a remote feed (the podcast enclosure) are untrusted.
+// Only absolute http(s) URLs are ever handed to curl/mpv, so a value can
+// never be read as a command-line option (--script, --config, -K) nor used to
+// read local files (file://). The ^https?:// anchor also rules out a leading
+// "-" outright, which is what actually stops option injection.
+function isHttpUrl(u) {
+  return /^https?:\/\/[^\s"'\\]+$/i.test(String(u || ""))
+}
+
 // ------------------------------------------------------- USCCB readings RSS
 
 // Official USCCB Daily Readings feed: full NAB-RE text, ~10-day rolling window.

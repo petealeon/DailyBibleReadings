@@ -171,7 +171,8 @@ Panel {
   readonly property real playbackRatio: liveDurationSeconds > 0
     ? Math.min(1, elapsedSeconds / liveDurationSeconds) : 0
 
-  // Right-click pill notification (quote-stripped so bar.run quoting holds).
+  // Right-click pill notification. Sent as argv (not a shell string), so the
+  // text is passed through verbatim with no shell-escaping.
   readonly property string notificationText: {
     var parts = []
     var meta = Cal.get(root.todayK)
@@ -182,7 +183,7 @@ Panel {
         if (currentReadings.sections[i].citation) cites.push(currentReadings.sections[i].citation)
       if (cites.length) parts.push(cites.join(" \u00B7 "))
     }
-    return String(parts.join(" \u2014 ")).replace(/[$`"\\]/g, "'")
+    return String(parts.join(" \u2014 "))
   }
 
   // Contrast target: the keyboard-popup card paints Color.popups.background.
@@ -232,8 +233,9 @@ Panel {
   function cacheRead(purpose, fileName) {
     if (!fileName) return
     cacheReadProc.purpose = purpose
-    cacheReadProc.command = ["bash", "-c",
-      "cat \"$HOME/.local/state/omarchy/petealeon.dailybiblereadings/cache/" + fileName + "\" 2>/dev/null"]
+    // The path travels as argv, never spliced into the script string.
+    var target = Quickshell.env("HOME") + "/.local/state/omarchy/petealeon.dailybiblereadings/cache/" + fileName
+    cacheReadProc.command = ["bash", "-c", "cat -- \"$1\" 2>/dev/null", "dailybiblereadings-cache-read", target]
     cacheReadProc.running = true
   }
 
@@ -463,12 +465,18 @@ Panel {
   function downloadPodcast() {
     var pod = currentPodcast
     if (!pod || !pod.url || downloading) return
+    // The enclosure URL comes from the remote feed: refuse anything that is
+    // not a plain http(s) URL before it can reach curl as an argument.
+    if (!Model.isHttpUrl(pod.url)) {
+      sendNotification("Podcast download failed")
+      return
+    }
     downloading = true
     downloadProc.command = ["bash", "-c",
       "set -o pipefail; dir=\"$(xdg-user-dir DOWNLOAD 2>/dev/null || echo \"$HOME/Downloads\")\"; "
       + "mkdir -p \"$dir\"; file=\"$dir/Daily-Mass-Reading-$2.mp3\"; "
       + "tmp=$(mktemp \"$dir/.Daily-Mass-Reading-$2.mp3.part.XXXXXX\") || tmp=\"\"; "
-      + "if [ -n \"$tmp\" ] && curl -fsSL --max-time 300 --max-filesize 104857600 \"$1\" | head -c 104857600 > \"$tmp\" "
+      + "if [ -n \"$tmp\" ] && curl -fsSL --max-time 300 --max-filesize 104857600 -- \"$1\" | head -c 104857600 > \"$tmp\" "
       + "&& [ -s \"$tmp\" ]; then mv -T \"$tmp\" \"$file\"; "
       + "omarchy-notification-send \"Podcast saved: $file\"; "
       + "else [ -n \"$tmp\" ] && rm -f \"$tmp\"; omarchy-notification-send \"Podcast download failed\"; fi",
@@ -482,6 +490,10 @@ Panel {
   property string pendingUrl: ""
 
   function startPlayback(url) {
+    // The enclosure URL comes from the remote feed: refuse anything that is
+    // not a plain http(s) URL before it can reach mpv as an argument. This
+    // also guards the in-place loadfile hot-swap below.
+    if (!Model.isHttpUrl(url)) return
     pendingUrl = url
     elapsedSeconds = 0
     liveDurationSeconds = currentPodcast ? currentPodcast.durationSeconds : 0
@@ -499,7 +511,7 @@ Panel {
     }
     playing = true
     mpvProc.command = ["bash", "-c",
-      "rm -f \"$1\"; exec mpv --no-video --no-terminal --really-quiet --keep-open=no --input-ipc-server=\"$1\" --title=DailyBibleReadings \"$2\"",
+      "rm -f \"$1\"; exec mpv --no-video --no-terminal --really-quiet --keep-open=no --input-ipc-server=\"$1\" --title=DailyBibleReadings -- \"$2\"",
       "dailybiblereadings-mpv", mpvSocket, pendingUrl]
     mpvProc.running = true
     console.log("[dailybiblereadings] mpv spawn issued")
@@ -654,8 +666,8 @@ Panel {
 
   function sendNotification(message) {
     if (!bar) return
-    var safe = String(message).replace(/[$`"\\]/g, "'")
-    bar.run("omarchy-notification-send \"" + safe + "\"")
+    // argv, not a shell string: message content can never be interpreted.
+    Util.execArgv(["omarchy-notification-send", String(message)])
   }
 
   // Copy readings to the clipboard, with brief feedback.
@@ -719,7 +731,7 @@ Panel {
   function openDayReadings(key) {
     var url = Model.usccbDayUrl(key)
     if (!Qt.openUrlExternally(url) && root.bar)
-      root.bar.run("xdg-open \"" + url + "\"")
+      Util.execArgv(["xdg-open", url])
   }
 
   // Calendar month being viewed.
@@ -919,7 +931,7 @@ Panel {
         cursorShape: Qt.PointingHandCursor
         onClicked: {
           if (!Qt.openUrlExternally(creditLine.url) && root.bar)
-            root.bar.run("xdg-open \"" + creditLine.url + "\"")
+            Util.execArgv(["xdg-open", creditLine.url])
         }
       }
     }

@@ -101,7 +101,7 @@ BarWidget {
       if (!root.bar) return
       if (b === Qt.RightButton) {
         var msg = panelLoader.item ? panelLoader.item.notificationText : ""
-        if (msg !== "") root.bar.run("omarchy-notification-send \"" + msg + "\"")
+        if (msg !== "") Util.execArgv(["omarchy-notification-send", msg])
       }
       else if (b === Qt.MiddleButton) root.refresh()
       else root.togglePanel()
